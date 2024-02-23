@@ -37,6 +37,7 @@ from py4DSTEM.process.phase.utils import (
     polar_aliases,
     polar_symbols,
 )
+import torch
 
 
 class SingleslicePtychography(
@@ -138,7 +139,15 @@ class SingleslicePtychography(
         Custom.__init__(self, name=name)
 
         if storage is None:
-            storage = device
+            if device == 'torch':
+                storage = 'gpu'
+            else:
+                storage = device
+        elif device == "torch":
+            storage = 'torch'
+
+        if device == "gpu" or device == "torch":
+            self._device_cuda = "cuda:0"
 
         self.set_device(device, clear_fft_cache)
         self.set_storage(storage)
@@ -398,6 +407,7 @@ class SingleslicePtychography(
 
         # explicitly transfer arrays to storage
         self._amplitudes = copy_to_device(self._amplitudes, storage)
+
         del _intensities
 
         self._num_diffraction_patterns = self._amplitudes.shape[0]
@@ -419,6 +429,8 @@ class SingleslicePtychography(
             self._object_padding_px,
             self._positions_offset_ang,
         )
+        # if self._xp is torch:
+        #     self._positions_px = self._positions_px.to(self._device_cuda)
 
         # initialize object
         self._object = self._initialize_object(
@@ -427,22 +439,42 @@ class SingleslicePtychography(
             self._object_type,
         )
 
-        self._object_initial = self._object.copy()
+        # self._object_initial = self._object.copy()
+        if self._xp is torch:
+            self._object_initial = torch.clone(self._object)
+        else:
+            self._object_initial = self._object.copy()
+
+
         self._object_type_initial = self._object_type
         self._object_shape = self._object.shape
 
         # center probe positions
-        self._positions_px = xp_storage.asarray(
-            self._positions_px, dtype=xp_storage.float32
-        )
+        if xp_storage is np and isinstance(self._positions_px, cp.ndarray):
+            self._positions_px = xp_storage.asarray(
+                self._positions_px.get(), dtype=xp_storage.float32,
+            )
+        else:
+            self._positions_px = xp_storage.asarray(
+                self._positions_px, dtype=xp_storage.float32,
+            )
+
         self._positions_px_initial_com = self._positions_px.mean(0)
         self._positions_px -= (
-            self._positions_px_initial_com - xp_storage.array(self._object_shape) / 2
+            self._positions_px_initial_com - xp_storage.asarray(self._object_shape) / 2
         )
         self._positions_px_initial_com = self._positions_px.mean(0)
 
-        self._positions_px_initial = self._positions_px.copy()
-        self._positions_initial = self._positions_px_initial.copy()
+        if self._xp is torch:
+            self._positions_px = self._positions_px.to(self._device_cuda)
+            self._positions_px_initial_com = self._positions_px_initial_com.to(self._device_cuda)
+
+        if self._device == 'torch':
+            self._positions_px_initial = self._positions_px.clone()
+            self._positions_initial = self._positions_px_initial.clone()
+        else:
+            self._positions_px_initial = self._positions_px.copy()
+            self._positions_initial = self._positions_px_initial.copy()
         self._positions_initial[:, 0] *= self.sampling[0]
         self._positions_initial[:, 1] *= self.sampling[1]
 
@@ -454,6 +486,8 @@ class SingleslicePtychography(
             self._semiangle_cutoff,
             crop_patterns,
         )
+        if self._xp is torch:
+            self._probe = self._probe.to(self._device_cuda)
 
         # initialize aberrations
         self._known_aberrations_array = ComplexProbe(
@@ -464,7 +498,13 @@ class SingleslicePtychography(
             device=device,
         )._evaluate_ctf()
 
-        self._probe_initial = self._probe.copy()
+        if self._xp is torch:
+            self._probe_initial = self._probe.clone()
+            self._region_of_interest_shape = torch.tensor(self._region_of_interest_shape, device=self._device_cuda)
+
+        else:
+            self._probe_initial = self._probe.copy()
+
         self._probe_initial_aperture = xp.abs(xp.fft.fft2(self._probe))
 
         # overlaps
@@ -472,6 +512,9 @@ class SingleslicePtychography(
             max_batch_size = self._num_diffraction_patterns
 
         probe_overlap = xp.zeros(self._object_shape, dtype=xp.float32)
+        if self._xp is torch:
+            probe_overlap = probe_overlap.to(self._device_cuda)
+
 
         for start, end in generate_batches(
             self._num_diffraction_patterns, max_batch=max_batch_size
@@ -481,6 +524,7 @@ class SingleslicePtychography(
             positions_px_fractional = positions_px - xp_storage.round(positions_px)
 
             shifted_probes = fft_shift(self._probe, positions_px_fractional, xp)
+
             probe_overlap += self._sum_overlapping_patches_bincounts(
                 xp.abs(shifted_probes) ** 2, positions_px
             )
@@ -490,7 +534,10 @@ class SingleslicePtychography(
         # initialize object_fov_mask
         if object_fov_mask is None:
             gaussian_filter = self._scipy.ndimage.gaussian_filter
-            probe_overlap_blurred = gaussian_filter(probe_overlap, 1.0)
+            if self._xp is torch:
+                probe_overlap_blurred = gaussian_filter(cp.array(probe_overlap), 1.0)
+            else:
+                probe_overlap_blurred = gaussian_filter(probe_overlap, 1.0)
             self._object_fov_mask = asnumpy(
                 probe_overlap_blurred > 0.25 * probe_overlap_blurred.max()
             )
@@ -498,6 +545,10 @@ class SingleslicePtychography(
         else:
             self._object_fov_mask = np.asarray(object_fov_mask)
         self._object_fov_mask_inverse = np.invert(self._object_fov_mask)
+        if self._device == 'torch':
+            self._object_fov_mask = torch.tensor(self._object_fov_mask, device=self._device_cuda)
+            self._object_fov_mask_inverse = torch.tensor(self._object_fov_mask_inverse, device=self._device_cuda)
+
 
         probe_overlap = asnumpy(probe_overlap)
 
@@ -617,6 +668,9 @@ class SingleslicePtychography(
         device: str = None,
         clear_fft_cache: bool = None,
         object_type: str = None,
+        filter_scan = False,
+        store_training_iterations = False,
+        ML_accel = None,
     ):
         """
         Ptychographic reconstruction main method.
@@ -737,6 +791,9 @@ class SingleslicePtychography(
         """
         # handle device/storage
         self.set_device(device, clear_fft_cache)
+        xp = self._xp
+        if self._device == "gpu" or self._device == "torch":
+            self._device_cuda = "cuda:0"
 
         if device is not None:
             attrs = [
@@ -797,6 +854,11 @@ class SingleslicePtychography(
 
         # initialization
         self._reset_reconstruction(store_iterations, reset)
+        if self._device == "torch":
+            self._probe = self._probe.to(self._device_cuda)
+        if reset and store_training_iterations:
+            self.object_delta_iterations = []
+            self.object_starting_iterations = []
 
         # main loop
         for a0 in tqdmnd(
@@ -806,6 +868,12 @@ class SingleslicePtychography(
             disable=not progress_bar,
         ):
             error = 0.0
+
+            ### art added stuff for training
+            self._object_delta = xp.zeros_like(self._object)
+            if store_iterations and store_training_iterations:
+                if a0 % store_training_iterations == 0:
+                    self.object_starting_iterations.append(asnumpy(self._object).copy())
 
             # randomize
             if not use_projection_scheme:
@@ -862,6 +930,7 @@ class SingleslicePtychography(
                     step_size=step_size,
                     normalization_min=normalization_min,
                     fix_probe=fix_probe,
+                    ML_accel = ML_accel,
                 )
 
                 # position correction
@@ -925,6 +994,7 @@ class SingleslicePtychography(
                 if fix_potential_baseline and self._object_fov_mask_inverse.sum() > 0
                 else None,
                 pure_phase_object=pure_phase_object and self._object_type == "complex",
+                filter_scan = filter_scan,
             )
 
             self.error_iterations.append(error.item())
@@ -932,6 +1002,10 @@ class SingleslicePtychography(
             if store_iterations:
                 self.object_iterations.append(asnumpy(self._object).copy())
                 self.probe_iterations.append(self.probe_centered)
+                if store_training_iterations:
+                    if a0 % store_training_iterations == 0:
+                        self.object_delta_iterations.append(asnumpy(self._object_delta).copy())
+
 
         # store result
         self.object = asnumpy(self._object)

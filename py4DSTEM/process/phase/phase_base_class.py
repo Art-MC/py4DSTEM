@@ -33,6 +33,9 @@ from py4DSTEM.process.utils import (
     get_shifted_ar,
 )
 
+import torch
+
+
 warnings.showwarning = lambda msg, *args, **kwargs: print(msg, file=sys.stderr)
 warnings.simplefilter("always", UserWarning)
 
@@ -76,6 +79,12 @@ class PhaseReconstruction(Custom):
             self._xp = cp
             self._scipy = scipy
 
+        elif device == "torch":
+            print("setting device and xp to torch.")
+            from cupyx import scipy
+            self._xp = torch
+            self._scipy = scipy
+
         else:
             raise ValueError(f"device must be either 'cpu' or 'gpu', not {device}")
 
@@ -105,6 +114,10 @@ class PhaseReconstruction(Custom):
             if self._xp is np:
                 raise ValueError("storage='gpu' and device='cpu' is not supported")
             self._xp_storage = cp
+
+        elif storage == "torch":
+            self._xp_storage = torch
+
 
         else:
             raise ValueError(f"storage must be either 'cpu' or 'gpu', not {storage}")
@@ -648,7 +661,11 @@ class PhaseReconstruction(Custom):
             # Coordinates
             kx = xp.arange(intensities.shape[-2], dtype=xp.float32)
             ky = xp.arange(intensities.shape[-1], dtype=xp.float32)
-            kya, kxa = xp.meshgrid(ky, kx)
+            if xp is torch:
+                kx = kx.to('cuda:0')
+                ky = ky.to('cuda:0')
+
+            kya, kxa = xp.meshgrid(ky, kx, indexing='ij')
 
             if vectorized_calculation:
                 # copy to device
@@ -707,8 +724,12 @@ class PhaseReconstruction(Custom):
             )
 
         # Fit function to center of mass
-        com_fitted_x = xp.asarray(com_shifts[0], dtype=xp.float32)
-        com_fitted_y = xp.asarray(com_shifts[1], dtype=xp.float32)
+        if self._device == "torch":
+            com_fitted_x = torch.asarray(com_shifts[0], dtype=torch.float32, device='cuda:0')
+            com_fitted_y = torch.asarray(com_shifts[1], dtype=torch.float32, device='cuda:0')
+        else:
+            com_fitted_x = xp.asarray(com_shifts[0], dtype=xp.float32)
+            com_fitted_y = xp.asarray(com_shifts[1], dtype=xp.float32)
 
         # fix CoM units
         com_normalized_x = (
@@ -808,7 +829,10 @@ class PhaseReconstruction(Custom):
         if force_com_rotation is not None:
             # Rotation known
 
-            _rotation_best_rad = np.deg2rad(force_com_rotation)
+            if self._device == "torch":
+                _rotation_best_rad = torch.deg2rad(torch.tensor(force_com_rotation))
+            else:
+                _rotation_best_rad = xp.deg2rad(force_com_rotation)
 
             if verbose:
                 warnings.warn(
@@ -1466,6 +1490,12 @@ class PhaseReconstruction(Custom):
             **kwargs,
         )
 
+    def ptp(self, arr):
+        if self._xp is torch:
+            return torch.max(arr) - torch.min(arr)
+        else:
+            return self._xp.ptp(arr)
+
 
 class PtychographicReconstruction(PhaseReconstruction):
     """
@@ -1794,6 +1824,7 @@ class PtychographicReconstruction(PhaseReconstruction):
         step_sizes = self._scan_sampling
         region_of_interest_shape = self._region_of_interest_shape
         sampling = self.sampling
+        xp = self._xp
 
         if positions is None:
             if grid_scan_shape is not None:
@@ -1801,20 +1832,20 @@ class PtychographicReconstruction(PhaseReconstruction):
 
                 if step_sizes is not None:
                     sx, sy = step_sizes
-                    x = np.arange(nx) * sx
-                    y = np.arange(ny) * sy
+                    x = xp.arange(nx) * sx
+                    y = xp.arange(ny) * sy
                 else:
                     raise ValueError()
             else:
                 raise ValueError()
 
             if transpose:
-                x = (x - np.ptp(x) / 2) / sampling[1]
-                y = (y - np.ptp(y) / 2) / sampling[0]
+                x = (x -self.ptp(x) / 2) / sampling[1]
+                y = (y -self.ptp(y) / 2) / sampling[0]
             else:
-                x = (x - np.ptp(x) / 2) / sampling[0]
-                y = (y - np.ptp(y) / 2) / sampling[1]
-            x, y = np.meshgrid(x, y, indexing="ij")
+                x = (x -self.ptp(x) / 2) / sampling[0]
+                y = (y -self.ptp(y) / 2) / sampling[1]
+            x, y = xp.meshgrid(x, y, indexing="ij")
 
             if positions_offset_ang is not None:
                 if transpose:
@@ -1828,21 +1859,25 @@ class PtychographicReconstruction(PhaseReconstruction):
                 x = x[positions_mask]
                 y = y[positions_mask]
         else:
-            positions -= np.mean(positions, axis=0)
+            positions -= xp.mean(positions, axis=0)
             x = positions[:, 0] / sampling[1]
             y = positions[:, 1] / sampling[0]
 
         if rotation_angle is not None:
-            x, y = x * np.cos(rotation_angle) + y * np.sin(rotation_angle), -x * np.sin(
+            x, y = x * xp.cos(rotation_angle) + y * xp.sin(rotation_angle), -x * xp.sin(
                 rotation_angle
-            ) + y * np.cos(rotation_angle)
+            ) + y * xp.cos(rotation_angle)
 
         if transpose:
-            positions = np.array([y.ravel(), x.ravel()]).T
+            positions = xp.stack([y.ravel(), x.ravel()]).T
         else:
-            positions = np.array([x.ravel(), y.ravel()]).T
+            positions = xp.stack([x.ravel(), y.ravel()]).T
 
-        positions -= np.min(positions, axis=0)
+        if xp is torch:
+            positions -= xp.min(positions, axis=0)[0] # weird torch min along axis thing
+        else:
+            positions -= xp.min(positions, axis=0)
+
 
         if object_padding_px is None:
             float_padding = region_of_interest_shape / 2
@@ -1876,24 +1911,48 @@ class PtychographicReconstruction(PhaseReconstruction):
             Summed array
         """
         # explicit read-only self attributes up-front
-        xp = get_array_module(patches)
+        if isinstance(patches, torch.Tensor):
+            xp = torch
+            # positions_px = torch.tensor(positions_px, device=patches.device)
+        else:
+            xp = get_array_module(patches)
+        # xp = get_array_module(positions_px)
+
         roi_shape = self._region_of_interest_shape
         object_shape = self._object_shape
 
-        x0 = xp.round(positions_px[:, 0]).astype("int")
-        y0 = xp.round(positions_px[:, 1]).astype("int")
+        if xp is torch:
+            x0 = xp.round(positions_px[:, 0]).type(torch.int)
+            y0 = xp.round(positions_px[:, 1]).type(torch.int)
 
-        x_ind = xp.fft.fftfreq(roi_shape[0], d=1 / roi_shape[0]).astype("int")
-        y_ind = xp.fft.fftfreq(roi_shape[1], d=1 / roi_shape[1]).astype("int")
+        else:
+            x0 = xp.round(positions_px[:, 0]).astype("int")
+            y0 = xp.round(positions_px[:, 1]).astype("int")
+
+        x_ind = xp.fft.fftfreq(roi_shape[0], d=1 / roi_shape[0])
+        y_ind = xp.fft.fftfreq(roi_shape[1], d=1 / roi_shape[1])
+        if xp is torch:
+            x_ind = x_ind.type(torch.int).to(x0.device)
+            y_ind = y_ind.type(torch.int).to(x0.device)
+        else:
+            x_ind = x_ind.astype('int')
+            y_ind = y_ind.astype('int')
 
         flat_weights = patches.ravel()
+
         indices = ((y0[:, None, None] + y_ind[None, None, :]) % object_shape[1]) + (
             (x0[:, None, None] + x_ind[None, :, None]) % object_shape[0]
         ) * object_shape[1]
+
+
         counts = xp.bincount(
             indices.ravel(), weights=flat_weights, minlength=np.prod(object_shape)
         )
-        counts = xp.reshape(counts, object_shape).astype(xp.float32)
+        counts = xp.reshape(counts, object_shape)
+        if xp is torch:
+            counts = counts.type(torch.float32)
+        else:
+            counts = counts.astype(xp.float32)
         return counts
 
     def _sum_overlapping_patches_bincounts(self, patches: np.ndarray, positions_px):
@@ -1912,7 +1971,12 @@ class PtychographicReconstruction(PhaseReconstruction):
             Summed array
         """
 
-        if np.iscomplexobj(patches):
+        if isinstance(patches, torch.Tensor):
+            iscomplex = torch.is_complex(patches)
+        else:
+            iscomplex = np.iscomplexobj(patches)
+
+        if iscomplex:
             real = self._sum_overlapping_patches_bincounts_base(
                 patches.real, positions_px
             )
@@ -1939,15 +2003,26 @@ class PtychographicReconstruction(PhaseReconstruction):
             Column indices for probe patches inside object array
         """
         # explicit read-only self attributes up-front
-        xp_storage = self._xp_storage
+        xp = self._xp
         roi_shape = self._region_of_interest_shape
         obj_shape = self._object_shape
 
-        x0 = xp_storage.round(positions_px[:, 0]).astype("int")
-        y0 = xp_storage.round(positions_px[:, 1]).astype("int")
+        x0 = xp.round(positions_px[:, 0])
+        y0 = xp.round(positions_px[:, 1])
 
-        x_ind = xp_storage.fft.fftfreq(roi_shape[0], d=1 / roi_shape[0]).astype("int")
-        y_ind = xp_storage.fft.fftfreq(roi_shape[1], d=1 / roi_shape[1]).astype("int")
+        x_ind = xp.fft.fftfreq(roi_shape[0], d=1 / roi_shape[0])
+        y_ind = xp.fft.fftfreq(roi_shape[1], d=1 / roi_shape[1])
+
+        if xp is torch:
+            x_ind = x_ind.to(x0.device).type(torch.int)
+            y_ind = y_ind.to(x0.device).type(torch.int)
+            x0 = x0.type(torch.int)
+            y0 = y0.type(torch.int)
+        else:
+            x_ind = x_ind.astype('int')
+            y_ind = y_ind.astype('int')
+            x0 = x0.astype('int')
+            y0 = y0.astype('int')
 
         vectorized_patch_indices_row = (
             x0[:, None, None] + x_ind[None, :, None]

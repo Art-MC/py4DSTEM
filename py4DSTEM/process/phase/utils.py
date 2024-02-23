@@ -24,6 +24,8 @@ from py4DSTEM.process.utils.cross_correlate import align_and_shift_images
 from py4DSTEM.process.utils.utils import electron_wavelength_angstrom
 from skimage.restoration import unwrap_phase
 
+import torch
+
 # fmt: off
 
 #: Symbols for the polar representation of all optical aberrations up to the fifth order.
@@ -109,6 +111,9 @@ class ComplexProbe:
         elif device == "gpu":
             self._xp = cp
             self._asnumpy = cp.asnumpy
+        elif device == "torch":
+            self._xp = torch
+            self._asnumpy = cp.asnumpy
         else:
             raise ValueError(f"device must be either 'cpu' or 'gpu', not {device}")
 
@@ -188,7 +193,7 @@ class ComplexProbe:
                 xp.ones_like(alpha, dtype=xp.float32),
             )
         else:
-            array = xp.array(alpha < semiangle_cutoff).astype(xp.float32)
+            array = xp.asarray(alpha < semiangle_cutoff).astype(xp.float32)
         return array
 
     def evaluate_temporal_envelope(
@@ -297,9 +302,9 @@ class ComplexProbe:
         p = self._parameters
 
         alpha2 = alpha**2
-        alpha = xp.array(alpha)
+        alpha = xp.asarray(alpha)
 
-        array = xp.zeros(alpha.shape, dtype=np.float32)
+        array = xp.zeros(alpha.shape, dtype=xp.float32)
         if any([p[symbol] != 0.0 for symbol in ("C10", "C12", "phi12")]):
             array += (
                 1 / 2 * alpha2 * (p["C10"] + p["C12"] * xp.cos(2 * (phi - p["phi12"])))
@@ -460,9 +465,14 @@ def spatial_frequencies(gpts: Tuple[int, int], sampling: Tuple[float, float], xp
     tuple of arrays
     """
 
-    return tuple(
-        xp.fft.fftfreq(n, d).astype(xp.float32) for n, d in zip(gpts, sampling)
-    )
+    if xp is torch:
+        return tuple(
+            xp.fft.fftfreq(n, d).type(xp.float32) for n, d in zip(gpts, sampling)
+        )
+    else:
+        return tuple(
+            xp.fft.fftfreq(n, d).astype(xp.float32) for n, d in zip(gpts, sampling)
+        )
 
 
 ### FFT-shift functions
@@ -498,6 +508,12 @@ def fourier_translation_operator(
     x = positions[:, 0].ravel()[:, None, None]
     y = positions[:, 1].ravel()[:, None, None]
 
+    if xp is torch:
+        kx = kx.to(x.device)
+        ky = ky.to(y.device)
+
+
+
     result = xp.exp(-2.0j * np.pi * kx[None, :, None] * x) * xp.exp(
         -2.0j * np.pi * ky[None, None, :] * y
     )
@@ -527,6 +543,8 @@ def fft_shift(array, positions, xp=np):
     """
     translation_operator = fourier_translation_operator(positions, array.shape[-2:], xp)
     fourier_array = xp.fft.fft2(array)
+    if xp is torch:
+        translation_operator = translation_operator.to(fourier_array.device)
 
     if len(translation_operator.shape) == 3 and len(fourier_array.shape) == 3:
         shifted_fourier_array = fourier_array[None] * translation_operator[:, None]
@@ -730,7 +748,7 @@ class AffineTransform:
         origin = xp.asarray(origin, dtype=xp.float32)
         tf_matrix = self.asarray()
         tf_matrix = xp.asarray(tf_matrix, dtype=xp.float32)
-        tf_translation = xp.array((self.t0, self.t1)) + origin
+        tf_translation = xp.asarray((self.t0, self.t1)) + origin
         return ((x - origin) @ tf_matrix) + tf_translation
 
     def __str__(self):
@@ -2485,13 +2503,27 @@ def partition_list(lst, size):
 
 def copy_to_device(array, device="cpu"):
     """Copies array to device. Default allows one to use this as asnumpy()"""
-    xp = get_array_module(array)
+    if isinstance(array, torch.Tensor):
+        xp = torch
+    else:
+        xp = get_array_module(array)
 
     if xp is np:
         if device == "cpu":
             return np.asarray(array)
         elif device == "gpu":
             return cp.asarray(array)
+        elif device == "torch":
+            return torch.tensor(array, device="cuda:0")
+        else:
+            raise ValueError(f"device must be either 'cpu' or 'gpu', not {device}")
+    elif xp is torch:
+        if device == "cpu":
+            return array.cpu().detach().numpy()
+        elif device == "gpu":
+            return cp.asarray(array.detach())
+        elif device == "torch":
+            return array
         else:
             raise ValueError(f"device must be either 'cpu' or 'gpu', not {device}")
     else:
@@ -2499,5 +2531,7 @@ def copy_to_device(array, device="cpu"):
             return cp.asnumpy(array)
         elif device == "gpu":
             return cp.asarray(array)
+        elif device == "torch":
+            return torch.tensor(array, device="cuda:0")
         else:
             raise ValueError(f"device must be either 'cpu' or 'gpu', not {device}")

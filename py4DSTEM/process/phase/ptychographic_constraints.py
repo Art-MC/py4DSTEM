@@ -20,6 +20,8 @@ except (ModuleNotFoundError, ImportError):
     os.environ["CUPY_PYLOPS"] = "0"
 import pylops  # this must follow the exception
 
+import torch
+from torchvision.transforms import GaussianBlur
 
 class ObjectNDConstraintsMixin:
     """
@@ -138,15 +140,26 @@ class ObjectNDConstraintsMixin:
             Constrained object estimate
         """
         xp = self._xp
-        gaussian_filter = self._scipy.ndimage.gaussian_filter
-        gaussian_filter_sigma /= self.sampling[0]
+        if xp is torch:
+            gaussian_filter_sigma /= self.sampling[0]
+            kernel_size = int(4 * gaussian_filter_sigma + 0.5) # matching to ndimage documentation, truncate=4, default
+            gaussian_filter = GaussianBlur(kernel_size, gaussian_filter_sigma.item())
 
-        if not pure_phase_object or self._object_type == "potential":
-            current_object = gaussian_filter(current_object, gaussian_filter_sigma)
+            if not pure_phase_object or self._object_type == "potential":
+                current_object = gaussian_filter(current_object[None,...]).squeeze()
+            else:
+                phase = xp.angle(current_object)
+                phase = gaussian_filter(phase[None,...]).squeeze()
+                current_object = xp.exp(1.0j * phase)
         else:
-            phase = xp.angle(current_object)
-            phase = gaussian_filter(phase, gaussian_filter_sigma)
-            current_object = xp.exp(1.0j * phase)
+            gaussian_filter = self._scipy.ndimage.gaussian_filter
+            gaussian_filter_sigma /= self.sampling[0]
+            if not pure_phase_object or self._object_type == "potential":
+                current_object = gaussian_filter(current_object, gaussian_filter_sigma)
+            else:
+                phase = xp.angle(current_object)
+                phase = gaussian_filter(phase, gaussian_filter_sigma)
+                current_object = xp.exp(1.0j * phase)
 
         return current_object
 
@@ -461,8 +474,109 @@ class ObjectNDConstraintsMixin:
         elif object_positivity:
             current_object = self._object_positivity_constraint(current_object)
 
+        # filtering scan positions
+        if kwargs.get("filter_scan", False):
+            current_object = self._object_fft_mask(current_object)
+
         return current_object
 
+
+    def _object_fft_mask(self, current_object):
+        xp = self._xp
+
+        object_fft = xp.fft.fft2(current_object)
+        points = self._loc_scan_spots(current_object.shape, order=3)
+        # masked_fft = self._mask_fft_points(object_fft, points, mask_shape=(7, 7))
+        masked_fft = self._mask_fft_points(object_fft, points, mask_shape=(31, 31))
+
+
+        return xp.fft.ifft2(masked_fft)
+
+
+    def _loc_scan_spots(self, object_shape, order = 1):
+        # not actually tested for non uniform step sizes or things
+        xp = self._xp
+
+        dimy, dimx = object_shape
+        inv_step_y = 1/self._scan_sampling[0] # 1/A
+        inv_step_x = 1/self._scan_sampling[1] # 1/A
+        pixelsize_y = 1 / (dimy * self.sampling[0]) # 1/A
+        pixelsize_x = 1 / (dimx * self.sampling[1]) # 1/A
+
+        points = []
+        for i in range(1, order+1):
+            rad_x = i * inv_step_x / pixelsize_x
+            rad_y = i * inv_step_y / pixelsize_y
+
+            y1, x1 = (rad_y*xp.sin(self._rotation_best_rad), rad_x*xp.cos(self._rotation_best_rad))
+            points.append([y1, x1])
+            points.append([x1, dimx-y1])
+            points.append([dimy-y1, dimx-x1])
+            points.append([dimy-x1, y1])
+
+        if order>1:
+            for i in range(1, order):
+                rad_x = i * xp.sqrt(2) * inv_step_x / pixelsize_x
+                rad_y = i * xp.sqrt(2) * inv_step_y / pixelsize_y
+                y1, x1 = (rad_y*xp.sin(self._rotation_best_rad+xp.pi/4), rad_x*xp.cos(self._rotation_best_rad+xp.pi/4))
+                points.append([y1, x1])
+                points.append([x1, dimx-y1])
+                points.append([dimy-y1, dimx-x1])
+                points.append([dimy-x1, y1])
+
+
+        return points
+
+
+    def _mask_fft_points(self, fft, points, mask_shape=(3,3), mask=None):
+        # y,x indexing here
+        xp = self._xp
+
+        masked_fft = xp.copy(fft)
+
+        a = int(xp.floor(mask_shape[0]/2))
+        b = int(xp.ceil(mask_shape[0]/2))
+        c = int(xp.floor(mask_shape[1]/2))
+        d = int(xp.ceil(mask_shape[1]/2))
+
+        if mask is None:
+            mask1 = xp.ones(mask_shape, dtype='complex')
+            mask2 = xp.ones((mask_shape[1], mask_shape[0]), dtype='complex')
+
+        for i, (y,x) in enumerate(points):
+            y, x = int(np.round(y)), int(np.round(x))
+            # alternating to effectively rotate the mask orientation
+            mask = mask1 if i%2==0 else mask2
+            masked_fft = self.apply_mask_pbc(masked_fft, mask, (y-a, y+b, x-c, x+d))
+            a, b, c, d = c, d, a, b
+
+        return masked_fft
+
+    def apply_mask_pbc(self, array, mask, slice):
+        xp = self._xp
+        dimy, dimx = array.shape
+        a, b, c, d = slice
+
+        # Handle negative indices
+        a %= dimy
+        b %= dimy
+        c %= dimx
+        d %= dimx
+
+        # Generate indices for the region of interest
+        if a <= b:
+            rows = xp.arange(a, b)
+        else:
+            rows = xp.concatenate((xp.arange(a, dimy), xp.arange(0, b)))
+        if c <= d:
+            cols = xp.arange(c, d)
+        else:
+            cols = xp.concatenate((xp.arange(c, dimx), xp.arange(0, d)))
+
+        # Apply mask to the specified region
+        array[rows[:, None], cols] = mask
+
+        return array
 
 class Object2p5DConstraintsMixin:
     """

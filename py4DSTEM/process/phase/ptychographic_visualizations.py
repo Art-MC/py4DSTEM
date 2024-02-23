@@ -64,30 +64,47 @@ class VisualizationsMixin:
         obj, kwargs = self._return_projected_cropped_potential(
             return_kwargs=True, **kwargs
         )
+
         probe = self._return_single_probe()
+
+        if self._device == 'torch':
+            probe = probe.cpu().detach().numpy()
+
 
         obj, vmin, vmax = return_scaled_histogram_ordering(obj, vmin, vmax)
 
+
+        if not isinstance(self.sampling[0], float):
+            sampling0 = self.sampling[0].cpu().detach().numpy()
+            sampling1 = self.sampling[1].cpu().detach().numpy()
+            roi0 = self._region_of_interest_shape[0].item()
+            roi1 = self._region_of_interest_shape[1].item()
+        else:
+            sampling0 = self.sampling[0]
+            sampling1 = self.sampling[1]
+            roi0 = self._region_of_interest_shape[0]
+            roi1 = self._region_of_interest_shape[1]
+
         extent = [
             0,
-            self.sampling[1] * obj.shape[1],
-            self.sampling[0] * obj.shape[0],
+            sampling1 * obj.shape[1],
+            sampling0 * obj.shape[0],
             0,
         ]
 
         if plot_fourier_probe:
             probe_extent = [
-                -self.angular_sampling[1] * self._region_of_interest_shape[1] / 2,
-                self.angular_sampling[1] * self._region_of_interest_shape[1] / 2,
-                self.angular_sampling[0] * self._region_of_interest_shape[0] / 2,
-                -self.angular_sampling[0] * self._region_of_interest_shape[0] / 2,
+                -self.angular_sampling[1] * roi1 / 2,
+                self.angular_sampling[1] * roi1 / 2,
+                self.angular_sampling[0] * roi0 / 2,
+                -self.angular_sampling[0] * roi0 / 2,
             ]
 
         elif plot_probe:
             probe_extent = [
                 0,
-                self.sampling[1] * self._region_of_interest_shape[1],
-                self.sampling[0] * self._region_of_interest_shape[0],
+                sampling1 * roi1,
+                sampling0 * roi0,
                 0,
             ]
 

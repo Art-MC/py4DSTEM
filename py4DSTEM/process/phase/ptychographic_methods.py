@@ -20,6 +20,9 @@ from py4DSTEM.process.utils import electron_wavelength_angstrom, get_CoM, get_sh
 from py4DSTEM.visualize import return_scaled_histogram_ordering, show, show_complex
 from scipy.ndimage import gaussian_filter, rotate
 
+###
+import torch
+
 try:
     import cupy as cp
 except (ModuleNotFoundError, ImportError):
@@ -47,7 +50,14 @@ class ObjectNDMethodsMixin:
         if initial_object is None:
             pad_x = object_padding_px[0][1]
             pad_y = object_padding_px[1][1]
-            p, q = np.round(np.max(positions_px, axis=0))
+            if xp is torch: # weird torch min/max along axis thing
+                p, q = xp.round(xp.max(positions_px, axis=0)[0])
+            else:
+                p, q = xp.round(xp.max(positions_px, axis=0))
+
+            p = self._asnumpy(p)
+            q = self._asnumpy(q)
+
             p = np.max([np.round(p + pad_x), region_of_interest_shape[0]]).astype("int")
             q = np.max([np.round(q + pad_y), region_of_interest_shape[1]]).astype("int")
             if object_type == "potential":
@@ -59,6 +69,9 @@ class ObjectNDMethodsMixin:
                 _object = xp.asarray(initial_object, dtype=xp.float32)
             elif object_type == "complex":
                 _object = xp.asarray(initial_object, dtype=xp.complex64)
+
+        if xp is torch:
+            _object = _object.to(self._device_cuda)
 
         return _object
 
@@ -95,6 +108,7 @@ class ObjectNDMethodsMixin:
             positions_px = asnumpy(self._positions_px)
         else:
             positions_px = asnumpy(positions_px)
+        angle = asnumpy(angle)
 
         tf = AffineTransform(angle=angle)
         rotated_points = tf(positions_px, origin=positions_px.mean(0), xp=np)
@@ -246,9 +260,14 @@ class ObjectNDMethodsMixin:
         # reset can be True, False, or None (default)
         if reset is True:
             self.error_iterations = []
-            self._object = self._object_initial.copy()
-            self._probe = self._probe_initial.copy()
-            self._positions_px = self._positions_px_initial.copy()
+            if self._device == 'torch':
+                self._object = self._object_initial.clone()
+                self._probe = self._probe_initial.clone()
+                self._positions_px = self._positions_px_initial.clone()
+            else:
+                self._object = self._object_initial.copy()
+                self._probe = self._probe_initial.copy()
+                self._positions_px = self._positions_px_initial.copy()
             self._object_type = self._object_type_initial
             self._exit_waves = None
 
@@ -1135,7 +1154,10 @@ class ProbeMethodsMixin:
         else:
             probe = xp.asarray(probe, dtype=xp.complex64)
 
-        return xp.fft.fftshift(probe, axes=(-2, -1))
+        if xp is torch:
+            return xp.fft.fftshift(probe, dim=(-2, -1))
+        else:
+            return xp.fft.fftshift(probe, axes=(-2, -1))
 
     def _return_probe_intensities(self, probe):
         """
@@ -1470,6 +1492,7 @@ class ObjectNDProbeMethodsMixin:
         if self._object_type == "potential":
             object_patches = xp.exp(1j * object_patches)
 
+
         overlap = shifted_probes * object_patches
 
         return shifted_probes, object_patches, overlap
@@ -1509,6 +1532,7 @@ class ObjectNDProbeMethodsMixin:
 
         fourier_overlap = xp.fft.fft2(overlap)
         farfield_amplitudes = self._return_farfield_amplitudes(fourier_overlap)
+
         error = xp.sum(xp.abs(amplitudes - farfield_amplitudes) ** 2)
 
         fourier_modified_overlap = amplitudes * xp.exp(1j * xp.angle(fourier_overlap))
@@ -1648,6 +1672,7 @@ class ObjectNDProbeMethodsMixin:
         error: float
             Reconstruction error
         """
+
         shifted_probes = self._return_shifted_probes(
             current_probe, positions_px_fractional
         )
@@ -1687,6 +1712,7 @@ class ObjectNDProbeMethodsMixin:
         step_size,
         normalization_min,
         fix_probe,
+        ML_accel=None,
     ):
         """
         Ptychographic adjoint operator for GD method.
@@ -1727,7 +1753,7 @@ class ObjectNDProbeMethodsMixin:
         )
 
         if self._object_type == "potential":
-            current_object += step_size * (
+            object_delta = step_size * (
                 self._sum_overlapping_patches_bincounts(
                     xp.real(
                         -1j
@@ -1740,12 +1766,34 @@ class ObjectNDProbeMethodsMixin:
                 * probe_normalization
             )
         else:
-            current_object += step_size * (
+            object_delta = step_size * (
                 self._sum_overlapping_patches_bincounts(
                     xp.conj(shifted_probes) * exit_waves, positions_px
                 )
                 * probe_normalization
             )
+
+        self._object_delta += object_delta
+
+        if ML_accel is not None:
+            model = ML_accel
+            # need FFTs of object and delta
+            obj_FT = xp.fft.fftshift(xp.fft.fft2(self._object))
+            delta_FT = xp.fft.fftshift(xp.fft.fft2(object_delta))
+            inp = torch.tensor(xp.stack([obj_FT, delta_FT])).type(torch.complex64).to(self._device_cuda)[None]
+            # center crop to 32,32
+            if model.inshape == (2,32,32):
+                input = self.center_crop_im_torch(inp, (32,32))
+
+            pred_delta = model.forward(input).squeeze()
+            new_obj_FT = self.add_center(inp.sum(axis=1), pred_delta)
+            new_obj_FT = cp.array(new_obj_FT.detach())
+
+            current_object = xp.fft.ifft2(xp.fft.ifftshift(new_obj_FT)).squeeze()
+
+
+        else:
+            current_object += object_delta
 
         if not fix_probe:
             object_normalization = xp.sum(
@@ -1767,6 +1815,64 @@ class ObjectNDProbeMethodsMixin:
             )
 
         return current_object, current_probe
+
+    def center_crop_im_torch(self, image, shape, center=None):
+        """crop image to (shape) keeping the center of the image
+
+        Args:
+            image (_type_): _description_
+            shape (_type_): _description_
+            dim_order_in (str, optional): _description_. Defaults to "channels_last".
+
+        Returns:
+            _type_: _description_
+        """
+        if shape[0] %2 == 1:
+            print('reminder weird odd padding fft thing')
+
+        dimy, dimx = image.shape[-2:]
+
+        dyf, dxf = shape
+
+        if dimy > dyf:
+            cropt = int(np.ceil((dimy - dyf) / 2))
+            cropb = -1 * int(np.floor((dimy - dyf) / 2))
+        elif dimy == dyf:
+            cropt, cropb = 0, dimy
+        else:
+            raise ValueError(f"Final shape {shape} larger than input shape {(dimy, dimx)}, use 'center_crop_pad'")
+
+        if dimx > dxf:
+            cropl = int(np.ceil((dimx - dxf) / 2))
+            cropr = -1 * int(np.floor((dimx - dxf) / 2))
+        elif dimx == dxf:
+            cropl, cropr = 0, dimx
+        else:
+            raise ValueError(f"Final shape {shape} larger than input shape {(dimy, dimx)}, use 'center_crop_pad'")
+
+        if center is not None:
+            offset_y = round((center[0] - dimy/2)/2)
+            offset_x = round((center[1] - dimy/2)/2)
+            cropt -= offset_y
+            cropb -= offset_y
+            cropl -= offset_x
+            cropr -= offset_x
+
+        return image[..., cropt:cropb, cropl:cropr]
+
+    def add_center(self, im, delta):
+        # add delta to center part of image
+        dy, dx = im.shape[-2], im.shape[-1]
+        ny, nx = delta.shape[-2], delta.shape[-1]
+        assert im.shape[0] == delta.shape[0] or len(delta.shape)==2
+        a = int(np.floor((dy/2-ny/2)))
+        b = int(np.floor((dy/2+ny/2)))
+        c = int(np.floor((dx/2-nx/2)))
+        d = int(np.floor((dx/2+nx/2)))
+        im[..., a:b, c:d] += delta
+        return im
+
+
 
     def _projection_sets_adjoint(
         self,
@@ -1870,6 +1976,7 @@ class ObjectNDProbeMethodsMixin:
         step_size: float,
         normalization_min: float,
         fix_probe: bool,
+        ML_accel=None,
     ):
         """
         Ptychographic adjoint operator.
@@ -1925,6 +2032,7 @@ class ObjectNDProbeMethodsMixin:
                 step_size,
                 normalization_min,
                 fix_probe,
+                ML_accel=ML_accel,
             )
 
         return current_object, current_probe
