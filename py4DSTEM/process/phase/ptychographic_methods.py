@@ -1713,6 +1713,7 @@ class ObjectNDProbeMethodsMixin:
         normalization_min,
         fix_probe,
         ML_accel=None,
+        start_ML_accel=0,
     ):
         """
         Ptychographic adjoint operator for GD method.
@@ -1773,21 +1774,25 @@ class ObjectNDProbeMethodsMixin:
                 * probe_normalization
             )
 
-        self._object_delta += object_delta
+        if self.store_training_iterations:
+            self._object_delta = object_delta
 
-        if ML_accel is not None:
+        if ML_accel is not None and start_ML_accel:
             model = ML_accel
             # need FFTs of object and delta
             obj_FT = xp.fft.fftshift(xp.fft.fft2(self._object))
             delta_FT = xp.fft.fftshift(xp.fft.fft2(object_delta))
-            inp = torch.tensor(xp.stack([obj_FT, delta_FT])).type(torch.complex64).to(self._device_cuda)[None]
-            # center crop to 32,32
-            if model.inshape == (2,32,32):
-                input = self.center_crop_im_torch(inp, (32,32))
+            inp = torch.stack([obj_FT, delta_FT])[None, ...]
 
-            pred_delta = model.forward(input).squeeze()
-            new_obj_FT = self.add_center(inp.sum(axis=1), pred_delta)
-            new_obj_FT = cp.array(new_obj_FT.detach())
+            # center crop
+            input = self.center_crop_im_torch(inp, (model.inshape[-2], model.inshape[-1]))
+
+            pred_delta = model.forward(input).squeeze() * 0.5
+            # new_obj_FT = self.add_center(inp.sum(axis=1), pred_delta)
+            new_obj_FT = self.add_center(inp[:,0], pred_delta)
+
+            if self._device != "torch":
+                new_obj_FT = cp.array(new_obj_FT.detach())
 
             current_object = xp.fft.ifft2(xp.fft.ifftshift(new_obj_FT)).squeeze()
 
@@ -1977,6 +1982,7 @@ class ObjectNDProbeMethodsMixin:
         normalization_min: float,
         fix_probe: bool,
         ML_accel=None,
+        start_ML_accel=False,
     ):
         """
         Ptychographic adjoint operator.
@@ -2033,6 +2039,7 @@ class ObjectNDProbeMethodsMixin:
                 normalization_min,
                 fix_probe,
                 ML_accel=ML_accel,
+                start_ML_accel=start_ML_accel,
             )
 
         return current_object, current_probe

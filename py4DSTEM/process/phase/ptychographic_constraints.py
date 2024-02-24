@@ -139,6 +139,8 @@ class ObjectNDConstraintsMixin:
         constrained_object: np.ndarray
             Constrained object estimate
         """
+        if gaussian_filter_sigma == 0:
+            return current_object
         xp = self._xp
         if xp is torch:
             gaussian_filter_sigma /= self.sampling[0]

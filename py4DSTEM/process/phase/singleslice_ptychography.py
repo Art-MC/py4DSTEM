@@ -671,6 +671,7 @@ class SingleslicePtychography(
         filter_scan = False,
         store_training_iterations = False,
         ML_accel = None,
+        training_mode = False,
     ):
         """
         Ptychographic reconstruction main method.
@@ -812,6 +813,8 @@ class SingleslicePtychography(
         xp_storage = self._xp_storage
         device = self._device
         asnumpy = self._asnumpy
+        self.training_mode = training_mode
+        self.store_training_iterations = store_training_iterations
 
         # set and report reconstruction method
         (
@@ -870,10 +873,13 @@ class SingleslicePtychography(
             error = 0.0
 
             ### art added stuff for training
-            self._object_delta = xp.zeros_like(self._object)
+            # self._object_delta = xp.zeros_like(self._object)
             if store_iterations and store_training_iterations:
                 if a0 % store_training_iterations == 0:
-                    self.object_starting_iterations.append(asnumpy(self._object).copy())
+                    if self._device == "torch":
+                        self.object_starting_iterations.append(self._object.clone())
+                    else:
+                        self.object_starting_iterations.append(asnumpy(self._object).copy())
 
             # randomize
             if not use_projection_scheme:
@@ -931,6 +937,7 @@ class SingleslicePtychography(
                     normalization_min=normalization_min,
                     fix_probe=fix_probe,
                     ML_accel = ML_accel,
+                    start_ML_accel=a0>3,
                 )
 
                 # position correction
@@ -948,6 +955,11 @@ class SingleslicePtychography(
                         max_position_update_distance,
                         max_position_total_distance,
                     )
+
+                if self.training_mode:
+                    FT_obj = xp.fft.fftshift(xp.fft.fft2(self._object))
+                    FT_cents = self.center_crop_im_torch(FT_obj, ML_accel.mask.shape)
+                    self.model_output_sum = ML_accel.mask * FT_cents
 
                 error += batch_error
 
@@ -1004,7 +1016,10 @@ class SingleslicePtychography(
                 self.probe_iterations.append(self.probe_centered)
                 if store_training_iterations:
                     if a0 % store_training_iterations == 0:
-                        self.object_delta_iterations.append(asnumpy(self._object_delta).copy())
+                        if self._device == 'torch':
+                            self.object_delta_iterations.append(self._object_delta.clone().detach())
+                        else:
+                            self.object_delta_iterations.append(asnumpy(self._object_delta).copy())
 
 
         # store result

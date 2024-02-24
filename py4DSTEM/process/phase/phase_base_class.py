@@ -80,7 +80,6 @@ class PhaseReconstruction(Custom):
             self._scipy = scipy
 
         elif device == "torch":
-            print("setting device and xp to torch.")
             from cupyx import scipy
             self._xp = torch
             self._scipy = scipy
@@ -1513,13 +1512,15 @@ class PtychographicReconstruction(PhaseReconstruction):
         asnumpy = self._asnumpy
 
         # instantiation metadata
-        tf = AffineTransform(angle=-self._rotation_best_rad)
+        angle = asnumpy(-self._rotation_best_rad)
+        tf = AffineTransform(angle=angle)
         pos = self.positions
 
         if pos.ndim == 2:
             origin = np.mean(pos, axis=0)
         else:
             origin = np.mean(pos, axis=(0, 1))
+
         scan_positions = tf(pos, origin)
 
         vacuum_probe_intensity = (
