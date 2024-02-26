@@ -22,6 +22,7 @@ import pylops  # this must follow the exception
 
 import torch
 from torchvision.transforms import GaussianBlur
+import itertools
 
 class ObjectNDConstraintsMixin:
     """
@@ -483,55 +484,38 @@ class ObjectNDConstraintsMixin:
         return current_object
 
 
-    def _object_fft_mask(self, current_object):
+    def _make_fft_mask(self, order=1, mask_shape=(10,10), mask=None):
         xp = self._xp
+        points = self._loc_scan_spots(order=order)
+        fft_mask = self._mask_fft_points(xp.ones_like(self._object), points, mask_shape=mask_shape, mask=mask)
+        return fft_mask
 
-        object_fft = xp.fft.fft2(current_object)
-        points = self._loc_scan_spots(current_object.shape, order=3)
-        # masked_fft = self._mask_fft_points(object_fft, points, mask_shape=(7, 7))
-        masked_fft = self._mask_fft_points(object_fft, points, mask_shape=(31, 31))
-
-
-        return xp.fft.ifft2(masked_fft)
-
-
-    def _loc_scan_spots(self, object_shape, order = 1):
-        # not actually tested for non uniform step sizes or things
-        xp = self._xp
-
-        dimy, dimx = object_shape
+    def _loc_scan_spots(self, order = 1):
+        dimy, dimx = self._object.shape
         inv_step_y = 1/self._scan_sampling[0] # 1/A
         inv_step_x = 1/self._scan_sampling[1] # 1/A
         pixelsize_y = 1 / (dimy * self.sampling[0]) # 1/A
         pixelsize_x = 1 / (dimx * self.sampling[1]) # 1/A
+        rad_x = inv_step_x / pixelsize_x
+        rad_y = inv_step_y / pixelsize_y
 
         points = []
-        for i in range(1, order+1):
-            rad_x = i * inv_step_x / pixelsize_x
-            rad_y = i * inv_step_y / pixelsize_y
 
-            y1, x1 = (rad_y*xp.sin(self._rotation_best_rad), rad_x*xp.cos(self._rotation_best_rad))
-            points.append([y1, x1])
-            points.append([x1, dimx-y1])
-            points.append([dimy-y1, dimx-x1])
-            points.append([dimy-x1, y1])
+        for i,j in itertools.product(np.arange(-1*order, order+1, 1), repeat=2):
+            if i == j == 0:
+                continue
 
-        if order>1:
-            for i in range(1, order):
-                rad_x = i * xp.sqrt(2) * inv_step_x / pixelsize_x
-                rad_y = i * xp.sqrt(2) * inv_step_y / pixelsize_y
-                y1, x1 = (rad_y*xp.sin(self._rotation_best_rad+xp.pi/4), rad_x*xp.cos(self._rotation_best_rad+xp.pi/4))
-                points.append([y1, x1])
-                points.append([x1, dimx-y1])
-                points.append([dimy-y1, dimx-x1])
-                points.append([dimy-x1, y1])
+            y =  i * rad_y
+            x = j * rad_x
+            x1 = x * np.cos(self._rotation_best_rad) - y * np.sin(self._rotation_best_rad)
+            y1 = x * np.sin(self._rotation_best_rad) + y * np.cos(self._rotation_best_rad)
 
+            points.append([y1,x1])
 
         return points
 
 
     def _mask_fft_points(self, fft, points, mask_shape=(3,3), mask=None):
-        # y,x indexing here
         xp = self._xp
 
         masked_fft = xp.copy(fft)
@@ -542,19 +526,24 @@ class ObjectNDConstraintsMixin:
         d = int(xp.ceil(mask_shape[1]/2))
 
         if mask is None:
-            mask1 = xp.ones(mask_shape, dtype='complex')
-            mask2 = xp.ones((mask_shape[1], mask_shape[0]), dtype='complex')
+            # should modify for non circular masks
+            mask = xp.array(circ4(mask_shape[0]), dtype='complex')
 
-        for i, (y,x) in enumerate(points):
+        for _, (y,x) in enumerate(points):
             y, x = int(np.round(y)), int(np.round(x))
-            # alternating to effectively rotate the mask orientation
-            mask = mask1 if i%2==0 else mask2
             masked_fft = self.apply_mask_pbc(masked_fft, mask, (y-a, y+b, x-c, x+d))
-            a, b, c, d = c, d, a, b
+            # a, b, c, d = c, d, a, b
+
+        # gaussian blur mask, pretty sure theres a filter in py4dstem already somewhere
+        masked_fft = self._scipy.ndimage.gaussian_filter(masked_fft, 1)
 
         return masked_fft
 
     def apply_mask_pbc(self, array, mask, slice):
+        """
+        slice is (a,b,c,d) -> [a:b, c:d], where a/b/c/d can be negative integers or
+        greater than the shape of the array
+        """
         xp = self._xp
         dimy, dimx = array.shape
         a, b, c, d = slice
@@ -575,10 +564,21 @@ class ObjectNDConstraintsMixin:
         else:
             cols = xp.concatenate((xp.arange(c, dimx), xp.arange(0, d)))
 
-        # Apply mask to the specified region
         array[rows[:, None], cols] = mask
 
         return array
+
+
+def circ4(dim, rad=None):
+    # 4 fold symmetric binary mask
+    if rad is None:
+        rad = dim/2
+    d = np.arange(dim) - dim//2
+    d = d + 0.5 if dim%2 == 0 else d
+    dx, dy = np.meshgrid(d, d)
+    dr = np.sqrt(dx**2+dy**2)
+    return (dr > rad).astype('int')
+
 
 class Object2p5DConstraintsMixin:
     """
