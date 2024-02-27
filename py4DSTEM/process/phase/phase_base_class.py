@@ -33,7 +33,10 @@ from py4DSTEM.process.utils import (
     get_shifted_ar,
 )
 
-import torch
+try:
+    import torch
+except ImportError:
+    pass
 
 
 warnings.showwarning = lambda msg, *args, **kwargs: print(msg, file=sys.stderr)
@@ -660,9 +663,9 @@ class PhaseReconstruction(Custom):
             # Coordinates
             kx = xp.arange(intensities.shape[-2], dtype=xp.float32)
             ky = xp.arange(intensities.shape[-1], dtype=xp.float32)
-            if xp is torch:
-                kx = kx.to('cuda:0')
-                ky = ky.to('cuda:0')
+            # if xp is torch:
+            #     kx = kx.to('cuda:0')
+            #     ky = ky.to('cuda:0')
 
             kya, kxa = xp.meshgrid(ky, kx, indexing='ij')
 
@@ -1490,7 +1493,7 @@ class PhaseReconstruction(Custom):
         )
 
     def ptp(self, arr):
-        if self._xp is torch:
+        if False: ## Torch fix self._xp is torch:
             return torch.max(arr) - torch.min(arr)
         else:
             return self._xp.ptp(arr)
@@ -1874,7 +1877,7 @@ class PtychographicReconstruction(PhaseReconstruction):
         else:
             positions = xp.stack([x.ravel(), y.ravel()]).T
 
-        if xp is torch:
+        if False: ## torch fix xp is torch:
             positions -= xp.min(positions, axis=0)[0] # weird torch min along axis thing
         else:
             positions -= xp.min(positions, axis=0)

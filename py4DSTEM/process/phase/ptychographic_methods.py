@@ -21,7 +21,10 @@ from py4DSTEM.visualize import return_scaled_histogram_ordering, show, show_comp
 from scipy.ndimage import gaussian_filter, rotate
 
 ###
-import torch
+try:
+    import torch
+except ImportError:
+    pass
 
 try:
     import cupy as cp
@@ -50,7 +53,7 @@ class ObjectNDMethodsMixin:
         if initial_object is None:
             pad_x = object_padding_px[0][1]
             pad_y = object_padding_px[1][1]
-            if xp is torch: # weird torch min/max along axis thing
+            if False: ## torch fix  xp is torch: # weird torch min/max along axis thing
                 p, q = xp.round(xp.max(positions_px, axis=0)[0])
             else:
                 p, q = xp.round(xp.max(positions_px, axis=0))
@@ -70,7 +73,7 @@ class ObjectNDMethodsMixin:
             elif object_type == "complex":
                 _object = xp.asarray(initial_object, dtype=xp.complex64)
 
-        if xp is torch:
+        if False: ## torch fix  xp is torch:
             _object = _object.to(self._device_cuda)
 
         return _object
@@ -1493,7 +1496,8 @@ class ObjectNDProbeMethodsMixin:
             object_patches = xp.exp(1j * object_patches)
 
 
-        overlap = shifted_probes * object_patches
+        # overlap = shifted_probes * object_patches
+        overlap = shifted_probes * object_patches * self._tukey_window
 
         return shifted_probes, object_patches, overlap
 
@@ -1773,6 +1777,12 @@ class ObjectNDProbeMethodsMixin:
                 )
                 * probe_normalization
             )
+            # object_delta = step_size * ( # doesn't do much
+            #     self._sum_overlapping_patches_bincounts(
+            #         xp.conj(shifted_probes) * exit_waves * self._tukey_window, positions_px
+            #     )
+            #     * probe_normalization
+            # )
 
         if self.store_training_iterations:
             self._object_delta = object_delta

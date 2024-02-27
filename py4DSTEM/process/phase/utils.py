@@ -24,7 +24,9 @@ from py4DSTEM.process.utils.cross_correlate import align_and_shift_images
 from py4DSTEM.process.utils.utils import electron_wavelength_angstrom
 from skimage.restoration import unwrap_phase
 
-import torch
+try: import torch
+except ImportError:
+    pass
 
 # fmt: off
 
@@ -465,7 +467,7 @@ def spatial_frequencies(gpts: Tuple[int, int], sampling: Tuple[float, float], xp
     tuple of arrays
     """
 
-    if xp is torch:
+    if False: ## torch fix xp is torch:
         return tuple(
             xp.fft.fftfreq(n, d).type(xp.float32) for n, d in zip(gpts, sampling)
         )
@@ -2503,7 +2505,7 @@ def partition_list(lst, size):
 
 def copy_to_device(array, device="cpu"):
     """Copies array to device. Default allows one to use this as asnumpy()"""
-    if isinstance(array, torch.Tensor):
+    if False: ## Torch fix isinstance(array, torch.Tensor):
         xp = torch
     else:
         xp = get_array_module(array)
@@ -2517,7 +2519,7 @@ def copy_to_device(array, device="cpu"):
             return torch.tensor(array, device="cuda:0")
         else:
             raise ValueError(f"device must be either 'cpu' or 'gpu', not {device}")
-    elif xp is torch:
+    elif False: ## Torch fix xp is torch:
         if device == "cpu":
             return array.cpu().detach().numpy()
         elif device == "gpu":
@@ -2535,3 +2537,27 @@ def copy_to_device(array, device="cpu"):
             return torch.tensor(array, device="cuda:0")
         else:
             raise ValueError(f"device must be either 'cpu' or 'gpu', not {device}")
+
+
+
+
+def tukey_window_xp(M, alpha, corner_centered=False, xp = np):
+    """ Returns a tapered cosine window using array module xp. """
+    n = xp.arange(M)
+    width = int(np.floor(alpha*(M-1)/2.0))
+
+    n1 = n[0:width+1]
+    n2 = n[width+1:M-width-1]
+    n3 = n[M-width-1:]
+
+    w1 = 0.5 * (1+xp.cos(np.pi*(-1.0 + 2.0*n1/alpha/(M-1))))
+    w2 = xp.ones(n2.shape)
+    w3 = 0.5 * (1+xp.cos(np.pi*(-2.0/alpha + 1 + 2.0*n3/alpha/(M-1))))
+
+    if corner_centered:
+        w2_l,w2_r = xp.split(w2,[int(np.ceil(M/2-width-1))])
+        w = xp.concatenate((w2_l,w3,w1,w2_r))
+    else:
+        w = xp.concatenate((w1,w2,w3))
+
+    return w

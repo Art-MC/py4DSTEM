@@ -20,8 +20,12 @@ except (ModuleNotFoundError, ImportError):
     os.environ["CUPY_PYLOPS"] = "0"
 import pylops  # this must follow the exception
 
-import torch
-from torchvision.transforms import GaussianBlur
+try:
+    import torch
+    from torchvision.transforms import GaussianBlur
+except ImportError:
+    pass
+
 import itertools
 
 class ObjectNDConstraintsMixin:
@@ -201,6 +205,7 @@ class ObjectNDConstraintsMixin:
         qra = xp.sqrt(qxa**2 + qya**2)
 
         env = xp.ones_like(qra)
+        env = self._grid_artifacts_mask
         if q_highpass:
             env *= 1 - 1 / (1 + (qra / q_highpass) ** (2 * butterworth_order))
         if q_lowpass:
@@ -479,10 +484,19 @@ class ObjectNDConstraintsMixin:
 
         # filtering scan positions
         if kwargs.get("filter_scan", False):
-            current_object = self._object_fft_mask(current_object)
+            current_object = self._filter_scan(current_object)
 
         return current_object
 
+    def _filter_scan(self, current_object):
+        xp = self._xp
+        current_object_mean = xp.mean(current_object)
+        current_object -= current_object_mean
+        objectFT = xp.fft.fft2(current_object)
+        current_object = xp.fft.ifft2(objectFT*self._grid_artifacts_mask)
+        current_object += current_object_mean
+
+        return current_object
 
     def _make_fft_mask(self, order=1, mask_shape=(10,10), mask=None):
         xp = self._xp
@@ -939,6 +953,7 @@ class Object3DConstraintsMixin:
         if q_lowpass:
             env *= 1 / (1 + (qra / q_lowpass) ** (2 * butterworth_order))
 
+        print('hi')
         current_object_mean = xp.mean(current_object)
         current_object -= current_object_mean
         current_object = xp.fft.ifftn(xp.fft.fftn(current_object) * env)

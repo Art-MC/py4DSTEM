@@ -33,11 +33,15 @@ from py4DSTEM.process.phase.utils import (
     ComplexProbe,
     copy_to_device,
     fft_shift,
+    tukey_window_xp,
     generate_batches,
     polar_aliases,
     polar_symbols,
 )
-import torch
+try:
+    import torch
+except ImportError:
+    pass
 from hipl.utils.filter import Tukey2D
 
 
@@ -441,7 +445,7 @@ class SingleslicePtychography(
         )
 
         # self._object_initial = self._object.copy()
-        if self._xp is torch:
+        if False: ## torch fix self._xp is torch:
             self._object_initial = torch.clone(self._object)
         else:
             self._object_initial = self._object.copy()
@@ -466,7 +470,7 @@ class SingleslicePtychography(
         )
         self._positions_px_initial_com = self._positions_px.mean(0)
 
-        if self._xp is torch:
+        if False: ## torch fix self._xp is torch:
             self._positions_px = self._positions_px.to(self._device_cuda)
             self._positions_px_initial_com = self._positions_px_initial_com.to(self._device_cuda)
 
@@ -487,7 +491,7 @@ class SingleslicePtychography(
             self._semiangle_cutoff,
             crop_patterns,
         )
-        if self._xp is torch:
+        if False: ## torch fix self._xp is torch:
             self._probe = self._probe.to(self._device_cuda)
 
         # initialize aberrations
@@ -499,7 +503,7 @@ class SingleslicePtychography(
             device=device,
         )._evaluate_ctf()
 
-        if self._xp is torch:
+        if False: ## torch fix self._xp is torch:
             self._probe_initial = self._probe.clone()
             self._region_of_interest_shape = torch.tensor(self._region_of_interest_shape, device=self._device_cuda)
 
@@ -516,7 +520,7 @@ class SingleslicePtychography(
         probe_overlap_Tukey = xp.zeros(self._object_shape, dtype=xp.float32)
         probe_window = xp.array(Tukey2D(self._probe.shape, alpha=1, shrink=42, shifted=True))
 
-        if self._xp is torch:
+        if False: ## torch fix self._xp is torch:
             probe_overlap = probe_overlap.to(self._device_cuda)
 
 
@@ -580,6 +584,32 @@ class SingleslicePtychography(
 
 
         del shifted_probes
+
+        # grid artifacts mask
+        self._grid_artifacts_mask = self._make_fft_mask(order=2, mask_shape=(10,10), mask=None)
+        # sx, sy = self._object_shape
+        # wx = xp.hanning(sx)**4
+        # wy = xp.hanning(sy)**4
+        # windowed_overlap = probe_overlap * wx[:,None]*wy[None,:]
+        # overlap_fft = xp.abs(xp.fft.fft2(windowed_overlap))
+        # vals = xp.sort(overlap_fft.ravel())
+        # ind_vmax = np.round((vals.shape[0]-1)*0.999).astype("int")
+        # ind_vmax = np.min([len(vals)-1, ind_vmax])
+        # vmax = vals[ind_vmax]
+        # overlap_fft = xp.where(overlap_fft > vmax,vmax,overlap_fft)
+        # overlap_fft -= overlap_fft.min()
+        # overlap_fft /= overlap_fft.max()
+        # qx = xp.fft.fftfreq(sx)
+        # qy = xp.fft.fftfreq(sy)
+        # qya, qxa = xp.meshgrid(qy, qx)
+        # qra = xp.sqrt(qxa**2 + qya**2)
+        # mask = (qra > 0.05)
+        # self._grid_artifacts_mask = 1-(overlap_fft * mask)
+
+        sx, sy = self._region_of_interest_shape
+        wx = tukey_window_xp(sx,0.25,corner_centered=True,xp=xp)
+        wy = tukey_window_xp(sy,0.25,corner_centered=True,xp=xp)
+        self._tukey_window = wx[:,None]*wy[None,:]
 
         # initialize object_fov_mask
         if object_fov_mask is None:
