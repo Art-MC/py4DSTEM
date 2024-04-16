@@ -42,7 +42,6 @@ try:
     import torch
 except ImportError:
     pass
-from hipl.utils.filter import Tukey2D
 
 
 class SingleslicePtychography(
@@ -445,7 +444,7 @@ class SingleslicePtychography(
         )
 
         # self._object_initial = self._object.copy()
-        if False: ## torch fix self._xp is torch:
+        if self._device == "torch":
             self._object_initial = torch.clone(self._object)
         else:
             self._object_initial = self._object.copy()
@@ -470,7 +469,7 @@ class SingleslicePtychography(
         )
         self._positions_px_initial_com = self._positions_px.mean(0)
 
-        if False: ## torch fix self._xp is torch:
+        if self._device == "torch":
             self._positions_px = self._positions_px.to(self._device_cuda)
             self._positions_px_initial_com = self._positions_px_initial_com.to(self._device_cuda)
 
@@ -491,7 +490,7 @@ class SingleslicePtychography(
             self._semiangle_cutoff,
             crop_patterns,
         )
-        if False: ## torch fix self._xp is torch:
+        if self._device == "torch":
             self._probe = self._probe.to(self._device_cuda)
 
         # initialize aberrations
@@ -503,7 +502,7 @@ class SingleslicePtychography(
             device=device,
         )._evaluate_ctf()
 
-        if False: ## torch fix self._xp is torch:
+        if self._device == "torch":
             self._probe_initial = self._probe.clone()
             self._region_of_interest_shape = torch.tensor(self._region_of_interest_shape, device=self._device_cuda)
 
@@ -517,12 +516,9 @@ class SingleslicePtychography(
             max_batch_size = self._num_diffraction_patterns
 
         probe_overlap = xp.zeros(self._object_shape, dtype=xp.float32)
-        probe_overlap_Tukey = xp.zeros(self._object_shape, dtype=xp.float32)
-        probe_window = xp.array(Tukey2D(self._probe.shape, alpha=1, shrink=42, shifted=True))
 
-        if False: ## torch fix self._xp is torch:
+        if self._device == "torch":
             probe_overlap = probe_overlap.to(self._device_cuda)
-
 
         for start, end in generate_batches(
             self._num_diffraction_patterns, max_batch=max_batch_size
@@ -532,57 +528,12 @@ class SingleslicePtychography(
             positions_px_fractional = positions_px - xp_storage.round(positions_px)
 
             shifted_probes = fft_shift(self._probe, positions_px_fractional, xp)
-            shifted_probes_tukey = fft_shift(probe_window * self._probe, positions_px_fractional, xp)
-
 
             probe_overlap += self._sum_overlapping_patches_bincounts(
                 xp.abs(shifted_probes) ** 2, positions_px
             )
 
-            probe_overlap_Tukey += self._sum_overlapping_patches_bincounts(
-                xp.abs(shifted_probes_tukey) ** 2, positions_px
-            )
-
         self._probe_overlap = probe_overlap
-        # print('win shrink 200 hardcoded')
-        # win1 = Tukey2D(probe_overlap_Tukey.shape, shrink=200)
-        # if xp is cp:
-        #     win1 = cp.array(win1)
-        # filter_scan_mask = -1*xp.abs(xp.fft.fft2(probe_overlap_Tukey*win1))
-        # filter_scan_mask -= filter_scan_mask.min()
-        # filter_scan_mask /= filter_scan_mask.max()
-        # filter_scan_mask[:10, :10] = 1
-        # filter_scan_mask[-10:, -10:] = 1
-        # filter_scan_mask[-10:, :10] = 1
-        # filter_scan_mask[:10, -10:] = 1
-
-        sx, sy = self._object_shape
-        wx = xp.hanning(sx)**4
-        wy = xp.hanning(sy)**4
-        windowed_overlap = probe_overlap * wx[:,None]*wy[None,:]
-        overlap_fft = xp.abs(xp.fft.fft2(windowed_overlap))
-
-        vals = xp.sort(overlap_fft.ravel())
-        ind_vmax = np.round((vals.shape[0]-1)*0.999).astype("int")
-        ind_vmax = np.min([len(vals)-1, ind_vmax])
-        vmax = vals[ind_vmax]
-
-        overlap_fft = xp.where(overlap_fft > vmax,vmax,overlap_fft)
-        overlap_fft -= overlap_fft.min()
-        overlap_fft /= overlap_fft.max()
-
-        qx = xp.fft.fftfreq(sx)
-        qy = xp.fft.fftfreq(sy)
-
-        qya, qxa = xp.meshgrid(qy, qx)
-        qra = xp.sqrt(qxa**2 + qya**2)
-        mask = (qra > 0.05)
-        # mask = (qra > 0.0125)
-
-
-        self._filter_scan_mask = 1-(overlap_fft * mask)
-
-
         del shifted_probes
 
         # grid artifacts mask
@@ -614,7 +565,7 @@ class SingleslicePtychography(
         # initialize object_fov_mask
         if object_fov_mask is None:
             gaussian_filter = self._scipy.ndimage.gaussian_filter
-            if self._xp is torch:
+            if self._device == "torch":
                 probe_overlap_blurred = gaussian_filter(cp.array(probe_overlap), 1.0)
             else:
                 probe_overlap_blurred = gaussian_filter(probe_overlap, 1.0)
@@ -749,7 +700,7 @@ class SingleslicePtychography(
         object_type: str = None,
         filter_scan = False,
         store_training_iterations = False,
-        ML_accel = None,
+        model = None,
         training_mode = False,
     ):
         """
@@ -938,10 +889,33 @@ class SingleslicePtychography(
         self._reset_reconstruction(store_iterations, reset)
         if self._device == "torch":
             self._probe = self._probe.to(self._device_cuda)
-        if reset and store_training_iterations:
+        store_training = False
+        if reset and type(store_training_iterations) in [list, np.ndarray]:
+            if np.any(store_training_iterations):
+                store_training = True
+                self.object_delta_iterations = []
+                self.object_starting_iterations = []
+        elif store_training_iterations:
+            store_training = True
             self.object_delta_iterations = []
             self.object_starting_iterations = []
+            store_training_iterations = self._xp.arange(num_iter)
 
+        run_ML_accel = True if model is not None else False
+        if run_ML_accel:
+            self._ML_stepdown_iter = 10
+            self._ML_stepdown_scale = 0.5
+            x = np.arange(num_iter)
+            sigmoid = 1 - 1 / (1+np.exp(-1*(x-self._ML_stepdown_iter)*self._ML_stepdown_scale))
+            # print("weighting ML sigmoid")
+            # self._ML_weights = sigmoid
+            print("weighting ML max(sigmoid, 1/a0)")
+            x[0] = 1
+            self._ML_weights = np.maximum(sigmoid, 1/x)
+        else:
+            self._ML_weights = None
+        # print("Consistent weighting")
+        # self._ML_weights = np.ones_like(x)
         # main loop
         for a0 in tqdmnd(
             num_iter,
@@ -951,12 +925,30 @@ class SingleslicePtychography(
         ):
             error = 0.0
 
+            if model is not None:
+                if a0 == 0:
+                    run_ML_accel = False
+                elif a0 == 1:
+                    run_ML_accel = True
+                    print(f'starting ML accel iter {a0}')
+                elif a0 > 2:
+                    if self.error_iterations[-1] > np.min(self.error_iterations[:-2]):
+                        if run_ML_accel:
+                            print(f"Error increasing. Turning off ML accel at iter {a0}")
+                            run_ML_accel = False
+                    # elif (a0+1) % 20 == 0:
+                    #     if not run_ML_accel:
+                    #         print(f"activating ML accel at iter {a0}")
+                    #     run_ML_accel = True
+                    #     pass
+
+
             ### art added stuff for training
             # self._object_delta = xp.zeros_like(self._object)
-            if store_iterations and store_training_iterations:
-                if a0 % store_training_iterations == 0:
+            if store_iterations and store_training:
+                if a0 in store_training_iterations:
                     if self._device == "torch":
-                        self.object_starting_iterations.append(self._object.clone())
+                        self.object_starting_iterations.append(self._object.clone().cpu().detach().numpy())
                     else:
                         self.object_starting_iterations.append(asnumpy(self._object).copy())
 
@@ -1015,10 +1007,10 @@ class SingleslicePtychography(
                     step_size=step_size,
                     normalization_min=normalization_min,
                     fix_probe=fix_probe,
-                    ML_accel = ML_accel,
-                    start_ML_accel=a0>3,
+                    model = model,
+                    # ML_weight = 1/a0 if run_ML_accel else 0,
+                    ML_weight = self._ML_weights[a0] if run_ML_accel else 0,
                 )
-
                 # position correction
                 if not fix_positions:
                     self._positions_px[batch_indices] = self._position_correction(
@@ -1093,13 +1085,13 @@ class SingleslicePtychography(
             if store_iterations:
                 self.object_iterations.append(asnumpy(self._object).copy())
                 self.probe_iterations.append(self.probe_centered)
-                if store_training_iterations:
-                    if a0 % store_training_iterations == 0:
+                if store_training:
+                    # if a0==0 or ((a0+1) % store_training_iterations == 0):
+                    if a0 in store_training_iterations:
                         if self._device == 'torch':
-                            self.object_delta_iterations.append(self._object_delta.clone().detach())
+                            self.object_delta_iterations.append(self._object_delta.clone().cpu().detach().numpy())
                         else:
                             self.object_delta_iterations.append(asnumpy(self._object_delta).copy())
-
 
         # store result
         self.object = asnumpy(self._object)

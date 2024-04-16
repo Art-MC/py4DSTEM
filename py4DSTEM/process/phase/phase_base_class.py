@@ -663,9 +663,9 @@ class PhaseReconstruction(Custom):
             # Coordinates
             kx = xp.arange(intensities.shape[-2], dtype=xp.float32)
             ky = xp.arange(intensities.shape[-1], dtype=xp.float32)
-            # if xp is torch:
-            #     kx = kx.to('cuda:0')
-            #     ky = ky.to('cuda:0')
+            if self._device == "torch":
+                kx = kx.to(self._device_cuda)
+                ky = ky.to(self._device_cuda)
 
             kya, kxa = xp.meshgrid(ky, kx, indexing='ij')
 
@@ -1493,7 +1493,7 @@ class PhaseReconstruction(Custom):
         )
 
     def ptp(self, arr):
-        if False: ## Torch fix self._xp is torch:
+        if self._device == "torch":
             return torch.max(arr) - torch.min(arr)
         else:
             return self._xp.ptp(arr)
@@ -1877,7 +1877,7 @@ class PtychographicReconstruction(PhaseReconstruction):
         else:
             positions = xp.stack([x.ravel(), y.ravel()]).T
 
-        if False: ## torch fix xp is torch:
+        if self._device == "torch":
             positions -= xp.min(positions, axis=0)[0] # weird torch min along axis thing
         else:
             positions -= xp.min(positions, axis=0)
@@ -1915,7 +1915,7 @@ class PtychographicReconstruction(PhaseReconstruction):
             Summed array
         """
         # explicit read-only self attributes up-front
-        if isinstance(patches, torch.Tensor):
+        if str(type(patches)).startswith("<class 'torch."):
             xp = torch
             # positions_px = torch.tensor(positions_px, device=patches.device)
         else:
@@ -1925,7 +1925,7 @@ class PtychographicReconstruction(PhaseReconstruction):
         roi_shape = self._region_of_interest_shape
         object_shape = self._object_shape
 
-        if xp is torch:
+        if xp.__name__ == "torch":
             x0 = xp.round(positions_px[:, 0]).type(torch.int)
             y0 = xp.round(positions_px[:, 1]).type(torch.int)
 
@@ -1935,7 +1935,7 @@ class PtychographicReconstruction(PhaseReconstruction):
 
         x_ind = xp.fft.fftfreq(roi_shape[0], d=1 / roi_shape[0])
         y_ind = xp.fft.fftfreq(roi_shape[1], d=1 / roi_shape[1])
-        if xp is torch:
+        if xp.__name__ == "torch":
             x_ind = x_ind.type(torch.int).to(x0.device)
             y_ind = y_ind.type(torch.int).to(x0.device)
         else:
@@ -1953,7 +1953,7 @@ class PtychographicReconstruction(PhaseReconstruction):
             indices.ravel(), weights=flat_weights, minlength=np.prod(object_shape)
         )
         counts = xp.reshape(counts, object_shape)
-        if xp is torch:
+        if xp.__name__ == "torch":
             counts = counts.type(torch.float32)
         else:
             counts = counts.astype(xp.float32)
@@ -1975,7 +1975,7 @@ class PtychographicReconstruction(PhaseReconstruction):
             Summed array
         """
 
-        if isinstance(patches, torch.Tensor):
+        if str(type(patches)).startswith("<class 'torch."):
             iscomplex = torch.is_complex(patches)
         else:
             iscomplex = np.iscomplexobj(patches)
@@ -2017,7 +2017,7 @@ class PtychographicReconstruction(PhaseReconstruction):
         x_ind = xp.fft.fftfreq(roi_shape[0], d=1 / roi_shape[0])
         y_ind = xp.fft.fftfreq(roi_shape[1], d=1 / roi_shape[1])
 
-        if xp is torch:
+        if xp.__name__ == "torch":
             x_ind = x_ind.to(x0.device).type(torch.int)
             y_ind = y_ind.to(x0.device).type(torch.int)
             x0 = x0.type(torch.int)

@@ -448,6 +448,9 @@ class ObjectNDConstraintsMixin:
         **kwargs,
     ):
         """ObjectNDConstraints wrapper function"""
+        # filtering scan positions, move to top
+        if kwargs.get("filter_scan", False):
+            current_object = self._filter_scan(current_object)
 
         # smoothness
         if gaussian_filter:
@@ -461,6 +464,7 @@ class ObjectNDConstraintsMixin:
                 q_highpass,
                 butterworth_order,
             )
+
         if tv_denoise:
             current_object = self._object_denoise_tv_pylops(
                 current_object, tv_denoise_weight, tv_denoise_inner_iter
@@ -481,10 +485,6 @@ class ObjectNDConstraintsMixin:
             )
         elif object_positivity:
             current_object = self._object_positivity_constraint(current_object)
-
-        # filtering scan positions
-        if kwargs.get("filter_scan", False):
-            current_object = self._filter_scan(current_object)
 
         return current_object
 
@@ -532,24 +532,34 @@ class ObjectNDConstraintsMixin:
     def _mask_fft_points(self, fft, points, mask_shape=(3,3), mask=None):
         xp = self._xp
 
-        masked_fft = xp.copy(fft)
+        if self._device == "torch":
+            masked_fft = xp.clone(fft)
+        else:
+            masked_fft = xp.copy(fft)
 
-        a = int(xp.floor(mask_shape[0]/2))
-        b = int(xp.ceil(mask_shape[0]/2))
-        c = int(xp.floor(mask_shape[1]/2))
-        d = int(xp.ceil(mask_shape[1]/2))
+        a = int(np.floor(mask_shape[0]/2))
+        b = int(np.ceil(mask_shape[0]/2))
+        c = int(np.floor(mask_shape[1]/2))
+        d = int(np.ceil(mask_shape[1]/2))
 
         if mask is None:
             # should modify for non circular masks
-            mask = xp.array(circ4(mask_shape[0]), dtype='complex')
+            if self._device == "torch":
+                mask = xp.asarray(circ4(mask_shape[0]), dtype=torch.complex64).to(self._device_cuda)
+            else:
+                mask = xp.array(circ4(mask_shape[0]), dtype='complex')
 
         for _, (y,x) in enumerate(points):
-            y, x = int(np.round(y)), int(np.round(x))
+            y, x = int(np.round(self._asnumpy(y))), int(np.round(self._asnumpy(x)))
             masked_fft = self.apply_mask_pbc(masked_fft, mask, (y-a, y+b, x-c, x+d))
             # a, b, c, d = c, d, a, b
 
         # gaussian blur mask, pretty sure theres a filter in py4dstem already somewhere
-        masked_fft = self._scipy.ndimage.gaussian_filter(masked_fft, 1)
+        if self._device == "torch":
+            gaussian_filter = GaussianBlur(5, 1)
+            masked_fft = gaussian_filter(masked_fft[None,...]).squeeze()
+        else:
+            masked_fft = self._scipy.ndimage.gaussian_filter(masked_fft, 1)
 
         return masked_fft
 

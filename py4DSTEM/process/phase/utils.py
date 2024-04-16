@@ -466,8 +466,7 @@ def spatial_frequencies(gpts: Tuple[int, int], sampling: Tuple[float, float], xp
     -------
     tuple of arrays
     """
-
-    if False: ## torch fix xp is torch:
+    if xp.__name__ == "torch":
         return tuple(
             xp.fft.fftfreq(n, d).type(xp.float32) for n, d in zip(gpts, sampling)
         )
@@ -510,7 +509,7 @@ def fourier_translation_operator(
     x = positions[:, 0].ravel()[:, None, None]
     y = positions[:, 1].ravel()[:, None, None]
 
-    if xp is torch:
+    if xp.__name__ == "torch":
         kx = kx.to(x.device)
         ky = ky.to(y.device)
 
@@ -545,7 +544,7 @@ def fft_shift(array, positions, xp=np):
     """
     translation_operator = fourier_translation_operator(positions, array.shape[-2:], xp)
     fourier_array = xp.fft.fft2(array)
-    if xp is torch:
+    if xp.__name__ == "torch":
         translation_operator = translation_operator.to(fourier_array.device)
 
     if len(translation_operator.shape) == 3 and len(fourier_array.shape) == 3:
@@ -2505,8 +2504,8 @@ def partition_list(lst, size):
 
 def copy_to_device(array, device="cpu"):
     """Copies array to device. Default allows one to use this as asnumpy()"""
-    if False: ## Torch fix isinstance(array, torch.Tensor):
-        xp = torch
+    if str(type(array)).startswith("<class 'torch."):
+        xp = "torch"
     else:
         xp = get_array_module(array)
 
@@ -2519,7 +2518,7 @@ def copy_to_device(array, device="cpu"):
             return torch.tensor(array, device="cuda:0")
         else:
             raise ValueError(f"device must be either 'cpu' or 'gpu', not {device}")
-    elif False: ## Torch fix xp is torch:
+    elif xp == "torch":
         if device == "cpu":
             return array.cpu().detach().numpy()
         elif device == "gpu":
@@ -2544,18 +2543,24 @@ def copy_to_device(array, device="cpu"):
 def tukey_window_xp(M, alpha, corner_centered=False, xp = np):
     """ Returns a tapered cosine window using array module xp. """
     n = xp.arange(M)
-    width = int(np.floor(alpha*(M-1)/2.0))
+    if xp.__name__ == "torch":
+        n = n.to(M.device)
+    width = int(xp.floor(alpha*(M-1)/2.0))
 
     n1 = n[0:width+1]
     n2 = n[width+1:M-width-1]
     n3 = n[M-width-1:]
 
-    w1 = 0.5 * (1+xp.cos(np.pi*(-1.0 + 2.0*n1/alpha/(M-1))))
+    w1 = 0.5 * (1+xp.cos(xp.pi*(-1.0 + 2.0*n1/alpha/(M-1))))
     w2 = xp.ones(n2.shape)
     w3 = 0.5 * (1+xp.cos(np.pi*(-2.0/alpha + 1 + 2.0*n3/alpha/(M-1))))
 
     if corner_centered:
-        w2_l,w2_r = xp.split(w2,[int(np.ceil(M/2-width-1))])
+        if xp.__name__ == "torch":
+            w2 = w2.to(M.device)
+            w2_l,w2_r = xp.split(w2,int(xp.ceil(M/2-width-1)))
+        else:
+            w2_l,w2_r = xp.split(w2,[int(xp.ceil(M/2-width-1))])
         w = xp.concatenate((w2_l,w3,w1,w2_r))
     else:
         w = xp.concatenate((w1,w2,w3))

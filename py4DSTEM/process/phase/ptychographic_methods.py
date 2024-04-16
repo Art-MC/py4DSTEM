@@ -53,7 +53,7 @@ class ObjectNDMethodsMixin:
         if initial_object is None:
             pad_x = object_padding_px[0][1]
             pad_y = object_padding_px[1][1]
-            if False: ## torch fix  xp is torch: # weird torch min/max along axis thing
+            if self._device == "torch": # weird torch min/max along axis thing
                 p, q = xp.round(xp.max(positions_px, axis=0)[0])
             else:
                 p, q = xp.round(xp.max(positions_px, axis=0))
@@ -73,7 +73,7 @@ class ObjectNDMethodsMixin:
             elif object_type == "complex":
                 _object = xp.asarray(initial_object, dtype=xp.complex64)
 
-        if False: ## torch fix  xp is torch:
+        if self._device == "torch":
             _object = _object.to(self._device_cuda)
 
         return _object
@@ -1157,7 +1157,7 @@ class ProbeMethodsMixin:
         else:
             probe = xp.asarray(probe, dtype=xp.complex64)
 
-        if xp is torch:
+        if self._device == "torch":
             return xp.fft.fftshift(probe, dim=(-2, -1))
         else:
             return xp.fft.fftshift(probe, axes=(-2, -1))
@@ -1716,8 +1716,8 @@ class ObjectNDProbeMethodsMixin:
         step_size,
         normalization_min,
         fix_probe,
-        ML_accel=None,
-        start_ML_accel=0,
+        model=None,
+        ML_weight=False,
     ):
         """
         Ptychographic adjoint operator for GD method.
@@ -1777,29 +1777,50 @@ class ObjectNDProbeMethodsMixin:
                 )
                 * probe_normalization
             )
-            # object_delta = step_size * ( # doesn't do much
-            #     self._sum_overlapping_patches_bincounts(
-            #         xp.conj(shifted_probes) * exit_waves * self._tukey_window, positions_px
-            #     )
-            #     * probe_normalization
-            # )
 
-        if self.store_training_iterations:
-            self._object_delta = object_delta
+        self._object_delta = object_delta
 
-        if ML_accel is not None and start_ML_accel:
-            model = ML_accel
+        if model is not None and ML_weight > 0:
+            dimy, dimx = object_delta.shape
+            assert dimy == dimx
+            # if dimy < 256:
+                # pw = (256-dimy)//2
+                # window = xp.hanning(dimy)
+                # window = window[None,] * window[...,None]
+                # window = window.astype('complex64')
+                # obj_input = xp.pad(self._object*window, pw)
+                # delta_input = xp.pad(object_delta*window, pw)
+                # show(xp.angle(obj_input).get())
+            # elif dimy > 256:
+            if dimy > 256:
+                # resize down
+                obj_input = vectorized_bilinear_resample(self._object, output_size=(256,256), xp=xp)
+                delta_input = vectorized_bilinear_resample(object_delta, output_size=(256,256), xp=xp)
+            else:
+                obj_input = self._object
+                delta_input = object_delta
+
             # need FFTs of object and delta
-            obj_FT = xp.fft.fftshift(xp.fft.fft2(self._object))
-            delta_FT = xp.fft.fftshift(xp.fft.fft2(object_delta))
-            inp = torch.stack([obj_FT, delta_FT])[None, ...]
+            obj_FT = xp.fft.fftshift(xp.fft.fft2(obj_input))
+            delta_FT = xp.fft.fftshift(xp.fft.fft2(delta_input))
+            if self._device != "torch":
+                obj_FT = torch.tensor(obj_FT, device = self._device_cuda)
+                delta_FT = torch.tensor(delta_FT, device = self._device_cuda)
+
+            inp = torch.stack([obj_FT, delta_FT])[None,...]
 
             # center crop
             input = self.center_crop_im_torch(inp, (model.inshape[-2], model.inshape[-1]))
+            pred_delta = model.forward(input).squeeze() * step_size * ML_weight
 
-            pred_delta = model.forward(input).squeeze() * 0.5
+            if dimy != 256:
+                _objFT = xp.fft.fftshift(xp.fft.fft2(self._object))
+                _deltFT = xp.fft.fftshift(xp.fft.fft2(object_delta))
+                inpsum = torch.tensor(_objFT + _deltFT, device=self._device_cuda)
+            else:
+                inpsum = inp.sum(axis=1)
             # new_obj_FT = self.add_center(inp.sum(axis=1), pred_delta)
-            new_obj_FT = self.add_center(inp[:,0], pred_delta)
+            new_obj_FT = self.add_center(inpsum, pred_delta)
 
             if self._device != "torch":
                 new_obj_FT = cp.array(new_obj_FT.detach())
@@ -1991,8 +2012,8 @@ class ObjectNDProbeMethodsMixin:
         step_size: float,
         normalization_min: float,
         fix_probe: bool,
-        ML_accel=None,
-        start_ML_accel=False,
+        model=None,
+        ML_weight=False,
     ):
         """
         Ptychographic adjoint operator.
@@ -2048,8 +2069,8 @@ class ObjectNDProbeMethodsMixin:
                 step_size,
                 normalization_min,
                 fix_probe,
-                ML_accel=ML_accel,
-                start_ML_accel=start_ML_accel,
+                model=model,
+                ML_weight=ML_weight,
             )
 
         return current_object, current_probe
