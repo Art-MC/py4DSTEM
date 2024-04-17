@@ -628,6 +628,10 @@ class SingleslicePtychography(
         device: str = None,
         clear_fft_cache: bool = None,
         object_type: str = None,
+        ### new,
+        store_training_iterations=False,
+        model=None,
+
     ):
         """
         Ptychographic reconstruction main method.
@@ -751,6 +755,8 @@ class SingleslicePtychography(
         """
         # handle device/storage
         self.set_device(device, clear_fft_cache)
+        if self._device == "gpu":
+            self._device_cuda = "cuda:0"
 
         if device is not None:
             attrs = [
@@ -818,6 +824,33 @@ class SingleslicePtychography(
         else:
             detector_fourier_mask = xp.asarray(detector_fourier_mask)
 
+        ### setting up for storing training data
+        store_training = False
+        if reset and type(store_training_iterations) in [list, np.ndarray]:
+            if np.any(store_training_iterations):
+                store_training = True
+                self.object_delta_iterations = []
+                self.object_starting_iterations = []
+        elif store_training_iterations:
+            store_training = True
+            self.object_delta_iterations = []
+            self.object_starting_iterations = []
+            store_training_iterations = self._xp.arange(num_iter)
+
+        run_ML_accel = True if model is not None else False
+        if model is not None:
+            self._ML_stepdown_iter = 10
+            self._ML_stepdown_scale = 0.5
+            x = np.arange(num_iter)
+            sigmoid = 1 - 1 / (1+np.exp(-1*(x-self._ML_stepdown_iter)*self._ML_stepdown_scale))
+            # print("weighting ML sigmoid")
+            # self._ML_weights = sigmoid
+            print("weighting ML max(sigmoid, 1/a0)")
+            x[0] = 1
+            self._ML_weights = np.maximum(sigmoid, 1/x)
+        else:
+            self._ML_weights = None
+
         # main loop
         for a0 in tqdmnd(
             num_iter,
@@ -825,6 +858,24 @@ class SingleslicePtychography(
             unit=" iter",
             disable=not progress_bar,
         ):
+            ### ML stuff start
+            if model is not None:
+                if a0 == 0:
+                    run_ML_accel = False
+                elif a0 == 1:
+                    run_ML_accel = True
+                    print(f'starting ML accel iter {a0}')
+                elif a0 > 2:
+                    if self.error_iterations[-1] > np.min(self.error_iterations[:-2]):
+                        if run_ML_accel:
+                            print(f"Error increasing. Turning off ML accel at iter {a0}")
+                            run_ML_accel = False
+
+            if store_iterations and store_training:
+                if a0 in store_training_iterations:
+                    self.object_starting_iterations.append(asnumpy(self._object).copy())
+            ### end ML stuff
+
             error = 0.0
 
             # randomize
@@ -883,6 +934,8 @@ class SingleslicePtychography(
                     step_size=step_size,
                     normalization_min=normalization_min,
                     fix_probe=fix_probe,
+                    model=model,
+                    ML_weight = self._ML_weights[a0] if run_ML_accel else 0,
                 )
 
                 # position correction
@@ -956,6 +1009,9 @@ class SingleslicePtychography(
             if store_iterations:
                 self.object_iterations.append(asnumpy(self._object).copy())
                 self.probe_iterations.append(self.probe_centered)
+                if store_training:
+                    if a0 in store_training_iterations:
+                        self.object_delta_iterations.append(asnumpy(self._object_delta).copy())
 
         # store result
         self.object = asnumpy(self._object)

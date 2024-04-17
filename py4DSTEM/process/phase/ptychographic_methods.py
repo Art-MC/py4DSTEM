@@ -31,6 +31,11 @@ try:
 except (ModuleNotFoundError, ImportError):
     cp = np
 
+try:
+    import torch
+except (ModuleNotFoundError, ImportError):
+    warnings.warn("pyTorch not available, cannot use ML acceleration.", UserWarning)
+
 
 class ObjectNDMethodsMixin:
     """
@@ -1788,6 +1793,8 @@ class ObjectNDProbeMethodsMixin:
         step_size,
         normalization_min,
         fix_probe,
+        model=None,
+        ML_weight=0,
     ):
         """
         Ptychographic adjoint operator for GD method.
@@ -1828,7 +1835,7 @@ class ObjectNDProbeMethodsMixin:
         )
 
         if self._object_type == "potential":
-            current_object += step_size * (
+            object_delta = step_size * (
                 self._sum_overlapping_patches_bincounts(
                     xp.real(
                         -1j
@@ -1840,13 +1847,64 @@ class ObjectNDProbeMethodsMixin:
                 )
                 * probe_normalization
             )
+            current_object += object_delta
         else:
-            current_object += step_size * (
+            object_delta = step_size * (
                 self._sum_overlapping_patches_bincounts(
                     xp.conj(shifted_probes) * exit_waves, positions_px
                 )
                 * probe_normalization
             )
+            current_object += object_delta
+
+        self._object_delta = object_delta
+
+        if model is not None and ML_weight > 0:
+            dimy, dimx = object_delta.shape
+            assert dimy == dimx
+            if dimy < 256:
+                # padding/rescaling before FFT seems to break things
+                # leaving this here for future testing
+                obj_input = self._object
+                delta_input = object_delta
+            elif dimy > 256:
+                # resize down
+                obj_input = bilinear_resample(
+                    self._object, output_size=(256, 256), xp=xp
+                )
+                delta_input = bilinear_resample(
+                    object_delta, output_size=(256, 256), xp=xp
+                )
+            else:
+                obj_input = self._object
+                delta_input = object_delta
+
+            obj_FT = xp.fft.fftshift(xp.fft.fft2(obj_input))
+            delta_FT = xp.fft.fftshift(xp.fft.fft2(delta_input))
+            obj_FT = torch.tensor(obj_FT, device=self._device_cuda)
+            delta_FT = torch.tensor(delta_FT, device=self._device_cuda)
+
+            # import torch
+            # define center_crop_im, add_center
+            inp = torch.stack([obj_FT, delta_FT])[None, ...]
+            input = self.center_crop_im(
+                inp, (model.inshape[-2], model.inshape[-1])
+            )
+            pred_delta = model.forward(input).squeeze() * step_size * ML_weight
+            pred_delta = cp.array(pred_delta.detach())
+
+            # lines to change if not adding ML output to delta
+            if obj_input.shape != object_delta.shape:
+                _objFT = xp.fft.fftshift(xp.fft.fft2(self._object))
+                _deltFT = xp.fft.fftshift(xp.fft.fft2(object_delta))
+                inpsum = _objFT + _deltFT
+            else:
+                inpsum = cp.array(inp.detach()).sum(axis=1)
+            new_obj_FT = self.add_center(inpsum, pred_delta)
+            current_object = xp.fft.ifft2(xp.fft.ifftshift(new_obj_FT)).squeeze()
+
+        else:
+            current_object += object_delta
 
         if not fix_probe:
             object_normalization = xp.sum(
@@ -1868,6 +1926,61 @@ class ObjectNDProbeMethodsMixin:
             )
 
         return current_object, current_probe
+
+    ### Additional utils used by ML, can be moved wherever
+    def center_crop_im(self, image, shape, center=None):
+        """crop image to (shape) keeping the center of the image
+        Args:
+            image (_type_): _description_
+            shape (_type_): _description_
+            dim_order_in (str, optional): _description_. Defaults to "channels_last".
+        Returns:
+            _type_: _description_
+        """
+        if shape[0] %2 == 1:
+            print('reminder weird odd padding fft thing')
+
+        dimy, dimx = image.shape[-2:]
+
+        dyf, dxf = shape
+
+        if dimy > dyf:
+            cropt = int(np.ceil((dimy - dyf) / 2))
+            cropb = -1 * int(np.floor((dimy - dyf) / 2))
+        elif dimy == dyf:
+            cropt, cropb = 0, dimy
+        else:
+            raise ValueError(f"Final shape {shape} larger than input shape {(dimy, dimx)}, use 'center_crop_pad'")
+
+        if dimx > dxf:
+            cropl = int(np.ceil((dimx - dxf) / 2))
+            cropr = -1 * int(np.floor((dimx - dxf) / 2))
+        elif dimx == dxf:
+            cropl, cropr = 0, dimx
+        else:
+            raise ValueError(f"Final shape {shape} larger than input shape {(dimy, dimx)}, use 'center_crop_pad'")
+
+        if center is not None:
+            offset_y = round((center[0] - dimy/2)/2)
+            offset_x = round((center[1] - dimy/2)/2)
+            cropt -= offset_y
+            cropb -= offset_y
+            cropl -= offset_x
+            cropr -= offset_x
+
+        return image[..., cropt:cropb, cropl:cropr]
+
+    def add_center(self, im, delta):
+        # add delta to center part of image
+        dy, dx = im.shape[-2], im.shape[-1]
+        ny, nx = delta.shape[-2], delta.shape[-1]
+        assert im.shape[0] == delta.shape[0] or len(delta.shape)==2
+        a = int(np.floor((dy/2-ny/2)))
+        b = int(np.floor((dy/2+ny/2)))
+        c = int(np.floor((dx/2-nx/2)))
+        d = int(np.floor((dx/2+nx/2)))
+        im[..., a:b, c:d] += delta
+        return im
 
     def _projection_sets_adjoint(
         self,
@@ -1971,6 +2084,8 @@ class ObjectNDProbeMethodsMixin:
         step_size: float,
         normalization_min: float,
         fix_probe: bool,
+        model=None,
+        ML_weight=0,
     ):
         """
         Ptychographic adjoint operator.
@@ -2026,6 +2141,8 @@ class ObjectNDProbeMethodsMixin:
                 step_size,
                 normalization_min,
                 fix_probe,
+                model=model,
+                ML_weight=ML_weight,
             )
 
         return current_object, current_probe
