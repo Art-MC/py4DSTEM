@@ -631,7 +631,7 @@ class SingleslicePtychography(
         ### new,
         store_training_iterations=False,
         model=None,
-
+        add_to_delta=True,
     ):
         """
         Ptychographic reconstruction main method.
@@ -757,6 +757,7 @@ class SingleslicePtychography(
         self.set_device(device, clear_fft_cache)
         if self._device == "gpu":
             self._device_cuda = "cuda:0"
+        self._add_to_delta=add_to_delta
 
         if device is not None:
             attrs = [

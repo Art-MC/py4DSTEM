@@ -1897,9 +1897,15 @@ class ObjectNDProbeMethodsMixin:
             if obj_input.shape != object_delta.shape:
                 _objFT = xp.fft.fftshift(xp.fft.fft2(self._object))
                 _deltFT = xp.fft.fftshift(xp.fft.fft2(object_delta))
-                inpsum = _objFT + _deltFT
+                if self._add_to_delta:
+                    inpsum = _objFT + _deltFT
+                else:
+                    inpsum = _objFT
             else:
-                inpsum = cp.array(inp.detach()).sum(axis=1)
+                if self._add_to_delta:
+                    inpsum = cp.array(inp.detach()).sum(axis=1)
+                else:
+                    inpsum = cp.array(obj_FT.detach())
             new_obj_FT = self.add_center(inpsum, pred_delta)
             current_object = xp.fft.ifft2(xp.fft.ifftshift(new_obj_FT)).squeeze()
 
