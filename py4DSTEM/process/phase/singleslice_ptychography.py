@@ -837,6 +837,8 @@ class SingleslicePtychography(
             self.object_delta_iterations = []
             self.object_starting_iterations = []
             store_training_iterations = self._xp.arange(num_iter)
+        if np.any(store_training_iterations) and not store_iterations:
+            print("Warning -- store_iterations is False, will not store training iters")
 
         run_ML_accel = True if model is not None else False
         if model is not None:
@@ -1008,11 +1010,12 @@ class SingleslicePtychography(
             self.error_iterations.append(error.item())
 
             if store_iterations:
-                self.object_iterations.append(asnumpy(self._object).copy())
-                self.probe_iterations.append(self.probe_centered)
                 if store_training:
                     if a0 in store_training_iterations:
                         self.object_delta_iterations.append(asnumpy(self._object_delta).copy())
+                else:
+                    self.object_iterations.append(asnumpy(self._object).copy())
+                    self.probe_iterations.append(self.probe_centered)
 
         # store result
         self.object = asnumpy(self._object)

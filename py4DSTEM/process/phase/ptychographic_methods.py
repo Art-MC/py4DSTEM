@@ -1793,6 +1793,8 @@ class ObjectNDProbeMethodsMixin:
         step_size,
         normalization_min,
         fix_probe,
+        model=None,
+        ML_weight=None,
     ):
         """
         Ptychographic adjoint operator for GD method.
@@ -1833,7 +1835,7 @@ class ObjectNDProbeMethodsMixin:
         )
 
         if self._object_type == "potential":
-            current_object += step_size * (
+            object_delta = step_size * (
                 self._sum_overlapping_patches_bincounts(
                     xp.real(
                         -1j
@@ -1846,12 +1848,68 @@ class ObjectNDProbeMethodsMixin:
                 * probe_normalization
             )
         else:
-            current_object += step_size * (
+            object_delta = step_size * (
                 self._sum_overlapping_patches_bincounts(
                     xp.conj(shifted_probes) * exit_waves, positions_px
                 )
                 * probe_normalization
             )
+
+        self._object_delta = object_delta
+
+        if model is not None and ML_weight > 0:
+            pass
+            # TODO change this to be no resizing pretty sure
+            # make sure when fftshifting that arrays are always 2d, maybe specify axes anyways
+
+            # dimy, dimx = object_delta.shape
+            # assert dimy == dimx
+            # # if dimy < 256:
+            #     # pw = (256-dimy)//2
+            #     # window = xp.hanning(dimy)
+            #     # window = window[None,] * window[...,None]
+            #     # window = window.astype('complex64')
+            #     # obj_input = xp.pad(self._object*window, pw)
+            #     # delta_input = xp.pad(object_delta*window, pw)
+            #     # show(xp.angle(obj_input).get())
+            # # elif dimy > 256:
+            # if dimy > 256:
+            #     # resize down
+            #     obj_input = vectorized_bilinear_resample(self._object, output_size=(256,256), xp=xp)
+            #     delta_input = vectorized_bilinear_resample(object_delta, output_size=(256,256), xp=xp)
+            # else:
+            #     obj_input = self._object
+            #     delta_input = object_delta
+
+            # # need FFTs of object and delta
+            # obj_FT = xp.fft.fftshift(xp.fft.fft2(obj_input))
+            # delta_FT = xp.fft.fftshift(xp.fft.fft2(delta_input))
+            # if self._device != "torch":
+            #     obj_FT = torch.tensor(obj_FT, device = self._device_cuda)
+            #     delta_FT = torch.tensor(delta_FT, device = self._device_cuda)
+
+            # inp = torch.stack([obj_FT, delta_FT])[None,...]
+
+            # # center crop
+            # input = self.center_crop_im_torch(inp, (model.inshape[-2], model.inshape[-1]))
+            # pred_delta = model.forward(input).squeeze() * step_size * ML_weight
+
+            # if dimy != 256:
+            #     _objFT = xp.fft.fftshift(xp.fft.fft2(self._object))
+            #     _deltFT = xp.fft.fftshift(xp.fft.fft2(object_delta))
+            #     inpsum = torch.tensor(_objFT + _deltFT, device=self._device_cuda)
+            # else:
+            #     inpsum = inp.sum(axis=1)
+            # # new_obj_FT = self.add_center(inp.sum(axis=1), pred_delta)
+            # new_obj_FT = self.add_center(inpsum, pred_delta)
+
+            # if self._device != "torch":
+            #     new_obj_FT = cp.array(new_obj_FT.detach())
+
+            # current_object = xp.fft.ifft2(xp.fft.ifftshift(new_obj_FT)).squeeze()
+
+        else:
+            current_object += object_delta
 
         if not fix_probe:
             object_normalization = xp.sum(
@@ -1976,6 +2034,9 @@ class ObjectNDProbeMethodsMixin:
         step_size: float,
         normalization_min: float,
         fix_probe: bool,
+        ### new
+        model=None,
+        ML_weight = None,
     ):
         """
         Ptychographic adjoint operator.
@@ -2031,6 +2092,8 @@ class ObjectNDProbeMethodsMixin:
                 step_size,
                 normalization_min,
                 fix_probe,
+                model=model,
+                ML_weight=ML_weight,
             )
 
         return current_object, current_probe
