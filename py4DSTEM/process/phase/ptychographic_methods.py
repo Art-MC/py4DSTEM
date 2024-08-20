@@ -31,6 +31,9 @@ try:
 except (ModuleNotFoundError, ImportError):
     cp = np
 
+import torch
+import scipy.ndimage as ndi
+
 
 class ObjectNDMethodsMixin:
     """
@@ -1858,55 +1861,32 @@ class ObjectNDProbeMethodsMixin:
         self._object_delta = object_delta
 
         if model is not None and ML_weight > 0:
-            pass
-            # TODO change this to be no resizing pretty sure
-            # make sure when fftshifting that arrays are always 2d, maybe specify axes anyways
+            from ptyML.utils.utils import add_center, center_crop_im, make_truth_mask
+            from ptyML.utils.utils import make_truth_mask
+            if self._FT_mask is None:
+                FT_mask = make_truth_mask(-1*np.rad2deg(self._rotation_best_rad), self._object.shape, self.object_cropped.shape, self._object_padding_px[0])
+                FT_mask = ndi.gaussian_filter(FT_mask, 8)
+                # show_im(FT_mask, "FT mask")
+                self._FT_mask = cp.array(FT_mask)
 
-            # dimy, dimx = object_delta.shape
-            # assert dimy == dimx
-            # # if dimy < 256:
-            #     # pw = (256-dimy)//2
-            #     # window = xp.hanning(dimy)
-            #     # window = window[None,] * window[...,None]
-            #     # window = window.astype('complex64')
-            #     # obj_input = xp.pad(self._object*window, pw)
-            #     # delta_input = xp.pad(object_delta*window, pw)
-            #     # show(xp.angle(obj_input).get())
-            # # elif dimy > 256:
-            # if dimy > 256:
-            #     # resize down
-            #     obj_input = vectorized_bilinear_resample(self._object, output_size=(256,256), xp=xp)
-            #     delta_input = vectorized_bilinear_resample(object_delta, output_size=(256,256), xp=xp)
-            # else:
-            #     obj_input = self._object
-            #     delta_input = object_delta
+            obj_FT = xp.fft.fftshift(xp.fft.fft2(self._object))
+            delta_FT = xp.fft.fftshift(xp.fft.fft2(object_delta))
+            obj_FT_win = xp.fft.fftshift(xp.fft.fft2(xp.abs(self._object) * self._FT_mask * xp.exp(1.0j * xp.angle(self._object) * self._FT_mask)))
+            delta_FT_win = xp.fft.fftshift(xp.fft.fft2(xp.abs(object_delta) * self._FT_mask * xp.exp(1.0j * xp.angle(object_delta) * self._FT_mask)))
 
-            # # need FFTs of object and delta
-            # obj_FT = xp.fft.fftshift(xp.fft.fft2(obj_input))
-            # delta_FT = xp.fft.fftshift(xp.fft.fft2(delta_input))
-            # if self._device != "torch":
-            #     obj_FT = torch.tensor(obj_FT, device = self._device_cuda)
-            #     delta_FT = torch.tensor(delta_FT, device = self._device_cuda)
+            obj_crop = torch.tensor(center_crop_im(obj_FT_win, (64,64)), device=self._device_cuda)
+            delta_crop = torch.tensor(center_crop_im(delta_FT_win, (64,64)), device=self._device_cuda)
 
-            # inp = torch.stack([obj_FT, delta_FT])[None,...]
+            nn_input = torch.stack([obj_crop, delta_crop])[None,...]
+            pred_delta = model.forward(nn_input).squeeze() * step_size * ML_weight
+            pred_delta = cp.array(pred_delta.detach())
 
-            # # center crop
-            # input = self.center_crop_im_torch(inp, (model.inshape[-2], model.inshape[-1]))
-            # pred_delta = model.forward(input).squeeze() * step_size * ML_weight
+            if self._add_to_delta:
+                new_obj_FT = add_center(obj_FT + delta_FT, pred_delta, return_copy=False)
+            else:
+                new_obj_FT = add_center(obj_FT, pred_delta, return_copy=False)
 
-            # if dimy != 256:
-            #     _objFT = xp.fft.fftshift(xp.fft.fft2(self._object))
-            #     _deltFT = xp.fft.fftshift(xp.fft.fft2(object_delta))
-            #     inpsum = torch.tensor(_objFT + _deltFT, device=self._device_cuda)
-            # else:
-            #     inpsum = inp.sum(axis=1)
-            # # new_obj_FT = self.add_center(inp.sum(axis=1), pred_delta)
-            # new_obj_FT = self.add_center(inpsum, pred_delta)
-
-            # if self._device != "torch":
-            #     new_obj_FT = cp.array(new_obj_FT.detach())
-
-            # current_object = xp.fft.ifft2(xp.fft.ifftshift(new_obj_FT)).squeeze()
+            current_object = xp.fft.ifft2(xp.fft.ifftshift(new_obj_FT)).squeeze()
 
         else:
             current_object += object_delta
@@ -1931,6 +1911,79 @@ class ObjectNDProbeMethodsMixin:
             )
 
         return current_object, current_probe
+
+    # def center_crop_im(self, image, shape, dim_order_in="channels_first", center=None, pad_ok=False):
+    #     """crop image to (shape) keeping the center of the image
+
+    #     Args:
+    #         image (_type_): _description_
+    #         shape (_type_): _description_
+    #         dim_order_in (str, optional): _description_. Defaults to "channels_first".
+    #         center (tuple, optional): center point around which to crop, defaults to None
+    #             which will use the center of the image
+
+
+    #     Returns:
+    #         _type_: _description_
+    #     """
+    #     if isinstance(image, np.ndarray):
+    #         image = np.copy(image)
+
+    #     if image.ndim == 2:
+    #         dimy, dimx = image.shape
+    #     elif image.ndim == 3:
+    #         if dim_order_in == "channels_last":
+    #             dimy, dimx, dimz = image.shape
+    #         elif dim_order_in == "channels_first":
+    #             dimz, dimy, dimx = image.shape
+    #     else:
+    #         dim_order_in == "channels_last"
+    #         dimy, dimx = image.shape[-2], image.shape[-1]
+
+    #     dyf, dxf = shape
+
+    #     if (dyf > dimy or dxf > dimx) and not pad_ok:
+    #         raise ValueError(
+    #             f"Final shape {shape} larger than input shape {(dimy, dimx)}, set pad_ok=True to pad"
+    #         )
+
+    #     if dyf > dimy:
+    #         cy1 = int(np.floor((dyf - dimy) / 2))
+    #         cy2 = int(np.ceil((dyf - dimy) / 2))
+    #         image = np.pad(image, ((cy1, cy2), (0, 0)))
+    #         dimy = dyf
+    #         cropt, cropb = 0, dimy
+    #     elif dimy > dyf:
+    #         cropt = int(np.floor((dimy - dyf) / 2))
+    #         cropb = -1 * int(np.ceil((dimy - dyf) / 2))
+    #     else: # dimy == dyf:
+    #         cropt, cropb = 0, dimy
+
+    #     if dxf > dimx:
+    #         cx1 = int(np.floor((dxf - dimx) / 2))
+    #         cx2 = int(np.ceil((dxf - dimx) / 2))
+    #         image = np.pad(image, ((0, 0), (cx1, cx2)))
+    #         dimx = dxf
+    #         cropl, cropr = 0, dimx
+    #     elif dimx > dxf:
+    #         cropl = int(np.floor((dimx - dxf) / 2))
+    #         cropr = -1 * int(np.ceil((dimx - dxf) / 2))
+    #     else: # dimx == dxf:
+    #         cropl, cropr = 0, dimx
+
+    #     if center is not None:
+    #         offset_y = round((center[0] - dimy / 2) / 2)
+    #         offset_x = round((center[1] - dimy / 2) / 2)
+    #         cropt -= offset_y
+    #         cropb -= offset_y
+    #         cropl -= offset_x
+    #         cropr -= offset_x
+
+    #     if dim_order_in == "channels_last" or image.ndim == 2:
+    #         return image[cropt:cropb, cropl:cropr]
+    #     elif dim_order_in == "channels_first":
+    #         return image[..., cropt:cropb, cropl:cropr]
+
 
     def _projection_sets_adjoint(
         self,

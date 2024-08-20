@@ -640,6 +640,8 @@ class SingleslicePtychography(
         store_training_iterations=False,
         model=None,
         add_to_delta=True,
+        training_mode = False,
+        model_start = 1,
     ):
         """
         Ptychographic reconstruction main method.
@@ -844,21 +846,43 @@ class SingleslicePtychography(
             store_training = True
             self.object_delta_iterations = []
             self.object_starting_iterations = []
-            store_training_iterations = self._xp.arange(num_iter)
+            store_training_iterations = self._xp.arange(num_iter)[1:]
         if np.any(store_training_iterations) and not store_iterations:
             print("Warning -- store_iterations is False, will not store training iters")
 
         run_ML_accel = True if model is not None else False
         if model is not None:
-            self._ML_stepdown_iter = 10
+            self._ML_stepdown_iter = 4 # 10
             self._ML_stepdown_scale = 0.5
-            x = np.arange(num_iter)
+            x = np.arange(num_iter) - model_start
             sigmoid = 1 - 1 / (1+np.exp(-1*(x-self._ML_stepdown_iter)*self._ML_stepdown_scale))
-            # print("weighting ML sigmoid")
-            # self._ML_weights = sigmoid
-            print("weighting ML max(sigmoid, 1/a0)")
-            x[0] = 1
-            self._ML_weights = np.maximum(sigmoid, 1/x)
+            weights = sigmoid
+            weights[:model_start] = 0
+
+
+            # weights[0:] = 0
+            # weights[1:3] = 1
+            if training_mode:
+                weights[model_start:] = 1
+            # weights[5:] = 0
+            # weights = weights / 2 # 1.25 # step size
+
+            # weights = np.zeros_like(weights)
+            # weights[2] = 1
+
+            self._ML_weights = weights
+            if self._verbose:
+                fig, ax = plt.subplots()
+                x = np.arange(num_iter)
+                ax.plot(np.arange(num_iter), self._ML_weights, "o")
+                ax.set_ylim([0,1.05])
+                ax.set_xlabel("iterations")
+                ax.set_ylabel("ML weight")
+                plt.show()
+
+            # make FT mask after first iteration
+            self._FT_mask = None
+
         else:
             self._ML_weights = None
 
@@ -873,12 +897,13 @@ class SingleslicePtychography(
             if model is not None:
                 if a0 == 0:
                     run_ML_accel = False
-                elif a0 == 1:
+                elif a0 == model_start:
                     run_ML_accel = True
-                    print(f'starting ML accel iter {a0}')
+                    if self._verbose:
+                        print(f'starting ML accel iter {a0}')
                 elif a0 > 2:
                     if self.error_iterations[-1] > np.min(self.error_iterations[:-2]):
-                        if run_ML_accel:
+                        if run_ML_accel and not training_mode:
                             print(f"Error increasing. Turning off ML accel at iter {a0}")
                             run_ML_accel = False
 
