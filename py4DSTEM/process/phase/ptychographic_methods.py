@@ -1863,6 +1863,10 @@ class ObjectNDProbeMethodsMixin:
         if model is not None and ML_weight > 0:
             from ptyML.utils.utils import add_center, center_crop_im, make_truth_mask
             from ptyML.utils.utils import make_truth_mask
+
+            # orig_obj_shape = self._object.shape
+            # sm_obj_shape = (154, 154)
+
             if self._FT_mask is None:
                 FT_mask = make_truth_mask(-1*np.rad2deg(self._rotation_best_rad), self._object.shape, self.object_cropped.shape, self._object_padding_px[0])
                 FT_mask = ndi.gaussian_filter(FT_mask, 8)
@@ -1874,6 +1878,11 @@ class ObjectNDProbeMethodsMixin:
             obj_FT_win = xp.fft.fftshift(xp.fft.fft2(xp.abs(self._object) * self._FT_mask * xp.exp(1.0j * xp.angle(self._object) * self._FT_mask)))
             delta_FT_win = xp.fft.fftshift(xp.fft.fft2(xp.abs(object_delta) * self._FT_mask * xp.exp(1.0j * xp.angle(object_delta) * self._FT_mask)))
 
+            # obj_FT = xp.array(bilinear_resample(obj_FT.get(), output_size=sm_obj_shape))
+            # delta_FT = xp.array(bilinear_resample(delta_FT.get(), output_size=sm_obj_shape))
+            # obj_FT_win = xp.array(bilinear_resample(obj_FT_win.get(), output_size=sm_obj_shape))
+            # delta_FT_win = xp.array(bilinear_resample(delta_FT_win.get(), output_size=sm_obj_shape))
+
             obj_crop = torch.tensor(center_crop_im(obj_FT_win, (64,64)), device=self._device_cuda)
             delta_crop = torch.tensor(center_crop_im(delta_FT_win, (64,64)), device=self._device_cuda)
 
@@ -1883,11 +1892,13 @@ class ObjectNDProbeMethodsMixin:
 
             if self._add_to_delta:
                 new_obj_FT = add_center(obj_FT + delta_FT, pred_delta, return_copy=False)
+                # new_obj_FT = add_center(xp.fft.fftshift(xp.fft.fft2(self._object)) + xp.fft.fftshift(xp.fft.fft2(object_delta)), pred_delta, return_copy=False)
             else:
                 new_obj_FT = add_center(obj_FT, pred_delta, return_copy=False)
 
+            # new_obj_FT = xp.array(bilinear_resample(new_obj_FT.get(), output_size=orig_obj_shape))
             current_object = xp.fft.ifft2(xp.fft.ifftshift(new_obj_FT)).squeeze()
-
+            # current_object = xp.array(bilinear_resample(current_object.get(), output_size=orig_obj_shape))
         else:
             current_object += object_delta
 

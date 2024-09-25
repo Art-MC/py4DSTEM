@@ -642,6 +642,7 @@ class SingleslicePtychography(
         add_to_delta=True,
         training_mode = False,
         model_start = 1,
+        model_iters=1,
     ):
         """
         Ptychographic reconstruction main method.
@@ -864,11 +865,9 @@ class SingleslicePtychography(
             # weights[1:3] = 1
             if training_mode:
                 weights[model_start:] = 1
-            # weights[5:] = 0
-            # weights = weights / 2 # 1.25 # step size
-
-            # weights = np.zeros_like(weights)
-            # weights[2] = 1
+            else:
+                weights[model_start+model_iters:] = 0
+                # weights = weights / 4 # 1.25 # step size
 
             self._ML_weights = weights
             if self._verbose:
@@ -903,7 +902,7 @@ class SingleslicePtychography(
                         print(f'starting ML accel iter {a0}')
                 elif a0 > 2:
                     if self.error_iterations[-1] > np.min(self.error_iterations[:-2]):
-                        if run_ML_accel and not training_mode:
+                        if run_ML_accel and self._ML_weights[a0] > 0 and not training_mode:
                             print(f"Error increasing. Turning off ML accel at iter {a0}")
                             run_ML_accel = False
 
