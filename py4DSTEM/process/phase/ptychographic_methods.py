@@ -12,6 +12,7 @@ from py4DSTEM.process.phase.utils import (
     bilinear_resample,
     copy_to_device,
     fft_shift,
+    fourier_rotate_volume,
     generate_batches,
     partition_list,
     rotate_point,
@@ -843,7 +844,7 @@ class Object3DMethodsMixin:
         normalized_array = array / xp.asarray(voxels_in_slice)[:, None, None]
         return xp.repeat(normalized_array, voxels_per_slice, axis=0)[:output_z]
 
-    def _rotate_zxy_volume(
+    def _rotate_zxy_volume_real(
         self,
         volume_array,
         rot_matrix,
@@ -863,9 +864,36 @@ class Object3DMethodsMixin:
         out_center = tf @ in_center
         offset = in_center - out_center
 
-        volume = affine_transform(volume, tf, offset=offset, order=order)
+        volume = affine_transform(
+            volume, tf, offset=offset, order=order, mode="grid-constant"
+        )
 
         return volume
+
+    def _rotate_zxy_volume_fourier(
+        self,
+        volume_array,
+        rot_matrix,
+    ):
+        """ """
+
+        xp = self._xp
+        swap_zxy_to_xyz = self._swap_zxy_to_xyz
+        tf = swap_zxy_to_xyz.T @ rot_matrix.T @ swap_zxy_to_xyz
+
+        return fourier_rotate_volume(volume_array, tf, xp=xp).real
+
+    def _rotate_zxy_volume(
+        self,
+        volume_array,
+        rot_matrix,
+        use_fourier_rotation,
+        order=3,
+    ):
+        if use_fourier_rotation:
+            return self._rotate_zxy_volume_fourier(volume_array, rot_matrix)
+        else:
+            return self._rotate_zxy_volume_real(volume_array, rot_matrix, order=order)
 
     def _initialize_object(
         self,
@@ -929,6 +957,7 @@ class Object3DMethodsMixin:
             obj = self._rotate_zxy_volume(
                 obj,
                 rot_matrix=rot_matrix,
+                use_fourier_rotation=False,
             )
 
         start_v, end_v = v_lims
@@ -983,6 +1012,7 @@ class Object3DMethodsMixin:
             obj = self._rotate_zxy_volume(
                 obj,
                 rot_matrix=orientation_matrix,
+                use_fourier_rotation=False,
             )
 
         start_v, end_v = vertical_lims

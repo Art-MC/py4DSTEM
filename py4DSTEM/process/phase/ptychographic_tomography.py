@@ -4,7 +4,7 @@ namely joint ptychographic tomography.
 """
 
 import warnings
-from typing import Mapping, Sequence, Tuple
+from typing import Mapping, Sequence, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -38,6 +38,8 @@ from py4DSTEM.process.phase.ptychographic_methods import (
 from py4DSTEM.process.phase.ptychographic_visualizations import VisualizationsMixin
 from py4DSTEM.process.phase.utils import (
     ComplexProbe,
+    calculate_orientation_matrices_serpentine_ordering,
+    calculate_orientation_matrices_tsp_ordering,
     copy_to_device,
     fft_shift,
     generate_batches,
@@ -238,6 +240,7 @@ class PtychographicTomography(
         force_reciprocal_sampling: float = None,
         progress_bar: bool = True,
         object_fov_mask: np.ndarray = True,
+        center_positions_in_fov=True,
         crop_patterns: bool = False,
         main_tilt_axis: str = "vertical",
         store_initial_arrays: bool = True,
@@ -561,8 +564,12 @@ class PtychographicTomography(
             idx_end = self._cum_probes_per_measurement[index + 1]
 
             positions_px = self._positions_px_all[idx_start:idx_end]
-            positions_px_com = positions_px.mean(0)
-            positions_px -= positions_px_com - xp_storage.array(self._object_shape) / 2
+
+            if center_positions_in_fov:
+                positions_px_com = positions_px.mean(0)
+                positions_px -= (
+                    positions_px_com - xp_storage.array(self._object_shape) / 2
+                )
             self._positions_px_all[idx_start:idx_end] = positions_px.copy()
 
         self._positions_px_initial_all = self._positions_px_all.copy()
@@ -757,6 +764,8 @@ class PtychographicTomography(
     def reconstruct(
         self,
         num_iter: int = 8,
+        orientation_matrices_ordering: Union[str, Sequence] = "shuffled",
+        use_fourier_rotation: bool = False,
         reconstruction_method: str = "gradient-descent",
         reconstruction_parameter: float = 1.0,
         reconstruction_parameter_a: float = None,
@@ -997,6 +1006,44 @@ class PtychographicTomography(
         if virtual_detector_masks is not None:
             virtual_detector_masks = xp.asarray(virtual_detector_masks).astype(xp.bool_)
 
+        # only return b/w iterations
+        old_rot_matrix = np.eye(3)  # identity
+
+        # compute orientation matrices ordering
+        if orientation_matrices_ordering == "shuffled":
+            all_indices = []
+            order = np.arange(self._num_measurements)
+            for i in range(num_iter):
+                np.random.shuffle(order)
+                all_indices.append(order.tolist())
+        elif orientation_matrices_ordering == "serpentine-scan":
+            all_indices = calculate_orientation_matrices_serpentine_ordering(
+                self._tilt_orientation_matrices,
+                num_iter,
+                collective_measurement_updates,
+            )
+        elif orientation_matrices_ordering == "traveling-salesman":
+            all_indices = calculate_orientation_matrices_tsp_ordering(
+                self._tilt_orientation_matrices, num_iter, angle_threshold=np.pi / 6
+            )
+        else:
+            # check if iterable
+            try:
+                iter(orientation_matrices_ordering)
+            except TypeError:
+                raise ValueError()
+            else:
+                # check if iterable of iterables
+                try:
+                    iter(orientation_matrices_ordering[0])
+                except TypeError:
+                    all_indices = [orientation_matrices_ordering] * num_iter
+                else:
+                    if len(orientation_matrices_ordering) != num_iter:
+                        raise ValueError()
+
+                    all_indices = orientation_matrices_ordering
+
         # main loop
         for a0 in tqdmnd(
             num_iter,
@@ -1009,10 +1056,7 @@ class PtychographicTomography(
             if collective_measurement_updates:
                 collective_object = xp.zeros_like(self._object)
 
-            indices = np.arange(self._num_measurements)
-            np.random.shuffle(indices)
-
-            old_rot_matrix = np.eye(3)  # identity
+            indices = all_indices[a0]
 
             for index in indices:
                 self._active_measurement_index = index
@@ -1022,9 +1066,11 @@ class PtychographicTomography(
                 rot_matrix = self._tilt_orientation_matrices[
                     self._active_measurement_index
                 ]
+
                 self._object = self._rotate_zxy_volume(
                     self._object,
                     rot_matrix @ old_rot_matrix.T,
+                    use_fourier_rotation,
                 )
 
                 object_sliced = self._project_sliced_object(
@@ -1139,7 +1185,9 @@ class PtychographicTomography(
 
                 if collective_measurement_updates:
                     collective_object += self._rotate_zxy_volume(
-                        object_update, rot_matrix.T
+                        object_update,
+                        rot_matrix.T,
+                        use_fourier_rotation,
                     )
                 else:
                     self._object += object_update
@@ -1238,13 +1286,15 @@ class PtychographicTomography(
                         tv_denoise_inner_iter=tv_denoise_inner_iter,
                     )
 
-            self._object = self._rotate_zxy_volume(self._object, old_rot_matrix.T)
-
             # Normalize Error Over Tilts
-            error /= self._num_measurements
+            error /= len(indices)
 
             if collective_measurement_updates:
-                self._object += collective_object / self._num_measurements
+                self._object += self._rotate_zxy_volume(
+                    collective_object / len(indices),
+                    old_rot_matrix,
+                    use_fourier_rotation,
+                )
 
                 # object only
                 self._object = self._object_constraints(
@@ -1273,8 +1323,15 @@ class PtychographicTomography(
             self.error_iterations.append(error.item())
 
             if store_iterations:
-                self.object_iterations.append(asnumpy(self._object.copy()))
+                rotated_object = self._rotate_zxy_volume(
+                    self._object, old_rot_matrix.T, use_fourier_rotation
+                )
+                self.object_iterations.append(asnumpy(rotated_object))
                 self.probe_iterations.append(self.probe_centered)
+
+        self._object = self._rotate_zxy_volume(
+            self._object, old_rot_matrix.T, use_fourier_rotation
+        )
 
         # store result
         self.object = asnumpy(self._object)
