@@ -1122,6 +1122,7 @@ class MagneticPtychographicTomography(
                 self._object = self._rotate_zxy_volume_util(
                     self._object,
                     rot_matrix @ old_rot_matrix.T,
+                    use_fourier_rotation=False,
                 )
                 object_V = self._object[0]
 
@@ -1249,6 +1250,7 @@ class MagneticPtychographicTomography(
                         collective_object[index] += self._rotate_zxy_volume(
                             object_update * weight,
                             rot_matrix.T,
+                            use_fourier_rotation=False,
                         )
                     else:
                         self._object[index] += object_update * weight
@@ -1350,7 +1352,9 @@ class MagneticPtychographicTomography(
                         tv_denoise_inner_iter=tv_denoise_inner_iter,
                     )
 
-            self._object = self._rotate_zxy_volume_util(self._object, old_rot_matrix.T)
+            self._object = self._rotate_zxy_volume_util(
+                self._object, old_rot_matrix.T, use_fourier_rotation=False
+            )
 
             # Normalize Error Over Tilts
             error /= self._num_measurements
@@ -1443,6 +1447,7 @@ class MagneticPtychographicTomography(
             ordered_obj = self._rotate_zxy_volume_vector(
                 self._object,
                 orientation_matrix,
+                use_fourier_rotation=False,
             )
 
             # V(z,x,y), Ax(z,x,y), Ay(z,x,y), Az(z,x,y)
@@ -1597,7 +1602,9 @@ class MagneticPtychographicTomography(
         """ """
         for index in range(4):
             current_object[index] = self._rotate_zxy_volume(
-                current_object[index], rot_matrix
+                current_object[index],
+                rot_matrix,
+                use_fourier_rotation=False,
             )
 
         return current_object
@@ -1642,7 +1649,9 @@ class MagneticPtychographicTomography(
 
         xp = self._xp  # switch back to device
         obj = xp.zeros_like(current_object)
-        obj[0] = self._rotate_zxy_volume(xp.asarray(current_object[0]), rot_matrix)
+        obj[0] = self._rotate_zxy_volume(
+            xp.asarray(current_object[0]), rot_matrix, use_fourier_rotation=False
+        )
 
         obj[1] = xp.asarray(Az(rotated_vecs).reshape(nz, nx, ny))
         obj[2] = xp.asarray(Ax(rotated_vecs).reshape(nz, nx, ny))
