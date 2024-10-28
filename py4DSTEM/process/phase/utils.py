@@ -1,4 +1,5 @@
 import functools
+import itertools
 from collections import defaultdict
 from typing import Mapping, Tuple, Union
 
@@ -7,6 +8,7 @@ import numpy as np
 from scipy.fft import dctn, idctn
 from scipy.ndimage import gaussian_filter, uniform_filter1d, zoom
 from scipy.optimize import curve_fit
+from scipy.spatial.transform import Rotation
 
 try:
     import cupy as cp
@@ -2755,3 +2757,298 @@ def cartesian_aberrations_to_polar(cartesian):
             else:
                 polar[modulus_name] = cartesian[modulus_name]
     return polar
+
+
+### 3D Fourier Rotation
+@functools.cache
+def compute_fourier_rotation_shear_coefficients(X, Y, Z, W):
+    """
+    Returns the a..h shear coefficients for the rotation decomposition:
+
+        R(q(X,Y,Z,W)) = Sy(a,b)@Sz(c,d)@Sx(e,f)@Sy(g,h),
+
+    where q(X,Y,Z,W) is the quaternion representation of a rotation.
+
+    Reference: 10.1016/j.gmod.2005.11.004
+    """
+    # force scalars
+    X, Y, Z, W = float(X), float(Y), float(Z), float(W)
+
+    try:
+        # special cases
+        if X == 0.0:
+            a = Y / Z
+            b = (1 - W**2) / (W * Z)
+            c = -2 * Y / W
+            d = -2 * Y * Z
+            e = -2 * W * Z
+            f = 0
+            g = -Y / Z
+            h = (1 - W**2) / (W * Z)
+
+        elif Y == 0.0:
+            a = -X / W
+            b = Z / W
+            c = 0
+            d = 2 * W * X
+            e = -2 * W * Z
+            f = 0
+            g = -X / W
+            h = Z / W
+
+        elif Z == 0.0:
+            a = (W**2 - 1) / (W * X)
+            b = Y / X
+            c = 0
+            d = 2 * W * X
+            e = 2 * X * Y
+            f = 2 * Y / W
+            g = (W**2 - 1) / (W * X)
+            h = -Y / X
+
+        # general case
+        else:
+            a = (X**2 + Y**2) / (Y * Z - X * W)
+            b = (Y**2 - Z**2) / (X * Y - Z * W) - 2 * (
+                Y * Z * (X**2 + Y**2)
+            ) / ((X * Y - Z * W) * (Y * Z - X * W))
+            c = 2 * Y * Z / (X * Y - Z * W)
+            d = 2 * (X * W - Y * Z)
+            e = 2 * (X * Y - Z * W)
+            f = -2 * X * Y / (Y * Z - X * W)
+            g = (X**2 - Y**2) / (Y * Z - X * W) + 2 * (
+                X * Y * (Y**2 + Z**2)
+            ) / ((X * Y - Z * W) * (Y * Z - X * W))
+            h = (-1 + X**2 + W**2) / (X * Y - Z * W)
+
+        return np.array([a, b, c, d, e, f, g, h]).reshape(4, 2)
+
+    # singular
+    except ZeroDivisionError:
+        return np.full((4, 2), np.inf)
+
+
+def compute_fourier_rotation_shears_combination(X, Y, Z, W):
+    """
+    Computes all six sets of shear coefficients for the combinations:
+        SySzSxSy, SzSxSySz, SxSySzSx, SySxSzSy, SzSySxSz, SxSzSySx
+    """
+    all_coeffs = np.empty((6, 4, 2))
+
+    for index in range(6):
+        match index:
+            case 0:  # SySzSxSy
+                coeffs = compute_fourier_rotation_shear_coefficients(X, Y, Z, W)
+            case 1:  # SzSxSySz
+                coeffs = compute_fourier_rotation_shear_coefficients(Y, Z, X, W)
+            case 2:  # SxSySzSx
+                coeffs = compute_fourier_rotation_shear_coefficients(Z, X, Y, W)
+            case 3:  # SySzSxSy complement
+                coeffs = -np.flipud(
+                    compute_fourier_rotation_shear_coefficients(X, Y, Z, -W)
+                )
+            case 4:  # SzSxSySz complement
+                coeffs = -np.flipud(
+                    compute_fourier_rotation_shear_coefficients(Y, Z, X, -W)
+                )
+            case 5:  # SxSySzSx complement
+                coeffs = -np.flipud(
+                    compute_fourier_rotation_shear_coefficients(Z, X, Y, -W)
+                )
+
+        all_coeffs[index] = coeffs
+
+    return all_coeffs
+
+
+def compute_fourier_rotation_best_shears_combination(X, Y, Z, W):
+    """
+    Computes all six sets of shear coefficients for the combinations:
+        SySzSxSy, SzSxSySz, SxSySzSx, SySxSzSy, SzSySxSz, SxSzSySx
+    and returns the one with the smallest squared coefficients.
+    """
+    all_coeffs = compute_fourier_rotation_shears_combination(X, Y, Z, W)
+    all_orders = np.array(
+        [
+            [1, 2, 0, 1],
+            [2, 0, 1, 2],
+            [0, 1, 2, 0],
+            [1, 0, 2, 1],
+            [2, 1, 0, 2],
+            [0, 2, 1, 0],
+        ]
+    )
+
+    # ind = np.argmin(np.sum(all_coeffs**2, axis=(-1, -2)))
+
+    flat_coeffs = all_coeffs.reshape((6, -1))
+    metric = np.zeros(6)
+    for indices in [[0, 6], [1, 7], [2], [3], [4], [5]]:  # |a+g| + |b+h| + |c| + ...
+        metric += np.abs(flat_coeffs[:, indices].sum(-1))
+    ind = np.argmin(metric)
+
+    return all_orders[ind], all_coeffs[ind]
+
+
+def fourier_rotation_best_shears_combination(tf):
+    """Memoized version of function above which accepts tf matrices as input"""
+    quaternion = Rotation.from_matrix(tf).as_quat()
+    return compute_fourier_rotation_best_shears_combination(*quaternion)
+
+
+def fourier_shear_Sx(array, a, b, xp=np):
+    """ """
+    Nx, Ny, Nz = array.shape
+    nx = xp.arange(Nx) - (Nx - 1) / 2
+    ny, nz = tuple(xp.fft.fftfreq(N, 1 / N) for N in [Ny, Nz])
+    nxa, nya, nza = xp.meshgrid(nx, ny, nz, indexing="ij")
+    phase_shift = xp.exp(-2j * np.pi * (a * nya + b * nza) * nxa / Nx)
+
+    array_fft = xp.fft.fft2(array, axes=(1, 2))
+    return xp.fft.ifft2(array_fft * phase_shift, axes=(1, 2))
+
+
+def fourier_shear_Sy(array, a, b, xp=np):
+    """ """
+    Nx, Ny, Nz = array.shape
+    ny = xp.arange(Ny) - (Ny - 1) / 2
+    nx, nz = tuple(xp.fft.fftfreq(N, 1 / N) for N in [Nx, Nz])
+    nxa, nya, nza = xp.meshgrid(nx, ny, nz, indexing="ij")
+    phase_shift = xp.exp(-2j * np.pi * (a * nza + b * nxa) * nya / Ny)
+
+    array_fft = xp.fft.fft2(array, axes=(0, 2))
+    return xp.fft.ifft2(array_fft * phase_shift, axes=(0, 2))
+
+
+def fourier_shear_Sz(array, a, b, xp=np):
+    """ """
+    Nx, Ny, Nz = array.shape
+    nz = xp.arange(Nz) - (Nz - 1) / 2
+    nx, ny = tuple(xp.fft.fftfreq(N, 1 / N) for N in [Nx, Ny])
+    nxa, nya, nza = xp.meshgrid(nx, ny, nz, indexing="ij")
+    phase_shift = xp.exp(-2j * np.pi * (a * nxa + b * nya) * nza / Nz)
+
+    array_fft = xp.fft.fft2(array, axes=(0, 1))
+    return xp.fft.ifft2(array_fft * phase_shift, axes=(0, 1))
+
+
+def fourier_rotate_volume_base(array, tf, xp=np):
+    """ """
+    order, coeffs = fourier_rotation_best_shears_combination(tf)
+    ordered_fns = [fourier_shear_Sx, fourier_shear_Sy, fourier_shear_Sz]
+
+    if np.all(np.isinf(coeffs)):
+        coeffs = np.zeros_like(coeffs)
+
+    out_array = xp.asarray(array)
+    for j, index in enumerate(order):
+        fn = ordered_fns[index]
+        out_array = fn(out_array, *coeffs[j], xp=xp)
+
+    return out_array
+
+
+def fourier_rotate_volume(array, tf, angle_threshold=np.pi / 6, xp=np):
+    """ """
+
+    cmplx_obj = xp.iscomplexobj(array)
+
+    rot_vec = Rotation.from_matrix(tf).as_rotvec()
+    k_rotations = np.ceil(np.linalg.norm(rot_vec) / angle_threshold).astype("int")
+    if k_rotations > 1:
+        tf_prime = Rotation.from_rotvec(rot_vec / k_rotations).as_matrix()
+        for k in range(k_rotations):
+            array = fourier_rotate_volume_base(array, tf_prime, xp=xp)
+    else:
+        array = fourier_rotate_volume_base(array, tf, xp=xp)
+
+    return array if cmplx_obj else array.real
+
+
+def distance_bw_orientation_matrices(tf1, tf2):
+    """ """
+    tf = tf1 @ tf2.T
+    return Rotation.from_matrix(tf).magnitude()
+
+
+def return_tsp_and_edge_weighted_graph(old_graph):
+
+    try:
+        import networkx as nx
+    except (ImportError, ModuleNotFoundError) as exc:
+        raise Exception(
+            "traveling salesman weighting requires package networkx"
+        ) from exc
+
+    # permute nodes
+    nodes = old_graph.nodes()
+    order = old_graph.order()
+    nodes = np.roll(nodes, np.random.randint(order))
+
+    # calculate tsp on weighted graph with permuted nodes
+    tsp = nx.approximation.traveling_salesman_problem(
+        old_graph, cycle=False, nodes=nodes, method=nx.approximation.greedy_tsp
+    )
+
+    # weight previously visited edges to add diversity
+    graph = old_graph.copy(as_view=False)
+    for u, v in nx.utils.pairwise(tsp):
+        graph[u][v]["weight"] += 0.5
+        graph[v][u]["weight"] += 0.5
+
+    return tsp, graph
+
+
+def calculate_orientation_matrices_tsp_ordering(
+    orientation_matrices, num_iter, angle_threshold=np.pi / 6
+):
+    """ """
+    try:
+        import networkx as nx
+    except (ImportError, ModuleNotFoundError) as exc:
+        raise Exception(
+            "traveling salesman weighting requires package networkx"
+        ) from exc
+
+    n = len(orientation_matrices)
+    distance_matrix = np.zeros((n, n))
+
+    # loop over upper-triangular
+    for ind_x in range(n):
+        tf1 = orientation_matrices[ind_x]
+        for ind_y in range(ind_x, n):
+            tf2 = orientation_matrices[ind_y]
+            distance_matrix[ind_x, ind_y] = distance_bw_orientation_matrices(tf1, tf2)
+
+    # symmetrize and remove self-loops
+    distance_matrix += distance_matrix.T
+    distance_matrix[distance_matrix == 0.0] = np.inf
+
+    # build graph
+    edges = np.stack(np.where(distance_matrix <= angle_threshold), -1)
+    nodes = np.arange(n)
+
+    graph = nx.Graph()
+    graph.add_nodes_from(nodes)
+    graph.add_edges_from(edges, weight=1)
+
+    # compute nested tsp
+    tsps = []
+    for n in range(num_iter):
+        tsp, graph = return_tsp_and_edge_weighted_graph(graph)
+        tsps.append(tsp)
+
+    return tsps
+
+
+def calculate_orientation_matrices_serpentine_ordering(
+    orientation_matrices,
+    num_iter,
+    collective_measurement_updates,
+):
+    """ """
+    fwd = np.arange(len(orientation_matrices))
+    rvs = fwd[::-1] if collective_measurement_updates else np.flip(fwd[1:-1])
+
+    tsps = list(itertools.islice(itertools.cycle((fwd, rvs)), num_iter))
+    return tsps
