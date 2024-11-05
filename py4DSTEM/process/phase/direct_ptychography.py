@@ -25,6 +25,7 @@ except (ImportError, ModuleNotFoundError):
 from emdfile import Array, Custom, Metadata, _read_metadata, tqdmnd
 from py4DSTEM.data import Calibration
 from py4DSTEM.datacube import DataCube
+from py4DSTEM.process.calibration import get_probe_size
 from py4DSTEM.process.phase.phase_base_class import PhaseReconstruction
 from py4DSTEM.process.phase.utils import (
     ComplexProbe,
@@ -38,7 +39,6 @@ from py4DSTEM.process.phase.utils import (
     unwrap_phase_2d_skimage,
 )
 from py4DSTEM.process.utils import electron_wavelength_angstrom, get_CoM, get_shifted_ar
-from py4DSTEM.process.calibration import get_probe_size
 
 _aberration_names = {
     (1, 0): "C1",
