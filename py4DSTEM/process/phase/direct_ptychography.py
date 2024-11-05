@@ -38,6 +38,7 @@ from py4DSTEM.process.phase.utils import (
     unwrap_phase_2d_skimage,
 )
 from py4DSTEM.process.utils import electron_wavelength_angstrom, get_CoM, get_shifted_ar
+from py4DSTEM.process.calibration import get_probe_size
 
 _aberration_names = {
     (1, 0): "C1",
@@ -320,6 +321,8 @@ class DirectPtychography(
 
     def preprocess(
         self,
+        crop_around_bf_disk: bool = True,
+        bf_disk_padding_px: int = 0,
         dp_mask: np.ndarray = None,
         in_place_datacube_modification: bool = False,
         fit_function: str = "plane",
@@ -528,6 +531,17 @@ class DirectPtychography(
         )
 
         self._intensities = self._intensities.reshape(_intensities.shape)
+
+        if crop_around_bf_disk:
+            r = np.ceil(get_probe_size(self._intensities.mean((0, 1)))[0]).astype("int")
+            r += bf_disk_padding_px
+            sx, sy = self._intensities.shape[:2]
+            _intensities = np.zeros((sx, sy, r * 2, r * 2))
+            _intensities[:, :, :r, :r] = self._intensities[:, :, :r, :r]
+            _intensities[:, :, :r, -r:] = self._intensities[:, :, :r, -r:]
+            _intensities[:, :, -r:, :r] = self._intensities[:, :, -r:, :r]
+            _intensities[:, :, -r:, -r:] = self._intensities[:, :, -r:, -r:]
+            self._intensities = _intensities
 
         # explicitly transfer arrays to storage
         if not in_place_datacube_modification:
