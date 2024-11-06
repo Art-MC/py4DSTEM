@@ -75,6 +75,19 @@ class Parallax(PhaseReconstruction):
     object_padding_px: Tuple[int,int], optional
         Pixel dimensions to pad object with
         If None, the padding is set to half the probe ROI dimensions
+    polar_parameters: dict, optional
+        Mapping from aberration symbols to their corresponding values. All aberration
+        magnitudes should be given in Å and angles should be given in radians.
+    device: str, optional
+        Device calculation will be perfomed on. Must be 'cpu' or 'gpu'
+    storage: str, optional
+        Device non-frequent arrays will be stored on. Must be 'cpu' or 'gpu'
+    clear_fft_cache: bool, optional
+        If True, and device = 'gpu', clears the cached fft plan at the end of function calls
+    name: str, optional
+        Class name
+    kwargs:
+        Provide the aberration coefficients as keyword arguments.
     """
 
     def __init__(
@@ -334,7 +347,7 @@ class Parallax(PhaseReconstruction):
         aligned_bf_image_guess: np.ndarray, optional
             Guess for the reference BF image to cross-correlate against during the first iteration
             If None, the incoherent BF image is used instead.
-        force_rotation: float, optional
+        force_rotation_angle_deg: float, optional
             Initial guess of rotation value in degrees.
         force_transpose: bool, optional
             Whether or not the dataset should be transposed.
@@ -2315,36 +2328,35 @@ class Parallax(PhaseReconstruction):
 
         Parameters
         ----------
-        fit_BF_shifts: bool
-            Set to True to fit aberrations to the measured BF shifts directly.
-        fit_CTF_FFT: bool
-            Set to True to fit aberrations in the FFT of the (upsampled) BF
-            image. Note that this method relies on visible zero crossings in the FFT.
-        fit_aberrations_max_radial_order: int
+        max_radial_order: int, optional
             Max radial order for fitting of aberrations.
-        fit_aberrations_max_angular_order: int
+        max_angular_order: int, optional
             Max angular order for fitting of aberrations.
-        fit_aberrations_min_radial_order: int
+        min_radial_order: int, optional
             Min radial order for fitting of aberrations.
-        fit_aberrations_min_angular_order: int
+        min_angular_order: int, optional
             Min angular order for fitting of aberrations.
-        fit_aberrations_mn: list
+        aberrations_mn: list, optional
             If not None, sets aberrations mn explicitly.
-        fit_max_thon_rings: int
-            Max number of Thon rings to search for during CTF FFT fitting.
-        fit_power_alpha: int
-            Power to raise FFT alpha weighting during CTF FFT fitting.
+        initialize_fit_with_polar_decomposition: bool, optional
+            If True (default), the defocus/stig estimates arising from the polar decomposition
+            are subtracted before the first aberrations order fit, and thus refined.
+        fit_method: str, optional
+            Order in which to fit aberration coefficients. One of:
+            'global': all orders are fitted at-once.
+              I.e. [[C1,C12a,C12b,C21a,C21b,C23a,C23b, ...]]
+            'recursive': fit happens recursively in increasing order of radial-aberrations. (Default)
+              I.e. [[C1,C12a,C12b],[C1,C12a,C12b,C21a, C21b, C23a, C23b], ...]
+            'recursive-exclusive': same as 'recursive' but previous orders are not refined further.
+              I.e. [[C1,C12a,C12b],[C21a, C21b, C23a, C23b], ...]
+        force_transpose: bool, optional
+            If True, flips the measured x and y shifts.
+        force_rotation_deg: float, optional
+            If not None, sets the rotation angle to value in degrees.
         plot_CTF_comparison: bool, optional
             If True, the fitted CTF is plotted against the reconstructed frequencies.
         plot_BF_shifts_comparison: bool, optional
             If True, the measured vs fitted BF shifts are plotted.
-        upsampled: bool
-            If True, and upsampled BF is available, uses that for CTF FFT fitting.
-        force_transpose: bool
-            If True, flips the measured x and y shifts.
-        force_rotation_deg: float
-            If not None, sets the rotation angle to value in degrees.
-
         """
         xp = self._xp
         asnumpy = self._asnumpy
@@ -2768,8 +2780,9 @@ class Parallax(PhaseReconstruction):
         self,
         use_CTF_fit=None,
         plot_corrected_phase: bool = True,
-        k_info_limit: float = None,
-        k_info_power: float = 1.0,
+        q_lowpass: float = None,
+        q_highpass: float = None,
+        butterworth_order: int = 2,
         upsampled: bool = True,
         **kwargs,
     ):
@@ -2783,10 +2796,10 @@ class Parallax(PhaseReconstruction):
             Default is True
         plot_corrected_phase: bool, optional
             If True, the CTF-corrected phase is plotted
-        k_info_limit: float, optional
-            maximum allowed frequency in butterworth filter
-        k_info_power: float, optional
-            power of butterworth filter
+        q_lowpass: float
+            Cut-off frequency in A^-1 for low-pass butterworth filter
+        butterworth_order: float
+            Butterworth filter order. Smaller gives a smoother filter
         """
 
         xp = self._xp
@@ -2846,10 +2859,8 @@ class Parallax(PhaseReconstruction):
         im_fft_corr = xp.fft.fft2(im) * CTF_corr
 
         # if needed, add low pass filter output image
-        if k_info_limit is not None:
-            im_fft_corr /= 1 + (kra2**k_info_power) / (
-                (k_info_limit) ** (2 * k_info_power)
-            )
+        if q_lowpass is not None:
+            im_fft_corr /= 1 + (xp.sqrt(qra) / q_lowpass) ** (2 * butterworth_order)
 
         # Output phase image
         self._recon_phase_corrected = xp.real(xp.fft.ifft2(im_fft_corr))
