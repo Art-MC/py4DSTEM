@@ -2124,27 +2124,26 @@ def pixel_rolling_kernel_density_estimate(
     pix_output: np.ndarray
         Upsampled intensity image
     """
-    upsampled_shape = np.array(stack.shape)
-    upsampled_shape *= (1, upsampling_factor, upsampling_factor)
+    upsampled_shape = np.array(stack.shape[-2:])
+    upsampled_shape *= upsampling_factor
 
     upsampled_shifts = shifts * upsampling_factor
     upsampled_shifts_int = xp.modf(upsampled_shifts)[-1].astype("int")
 
+    pix_output = xp.zeros(upsampled_shape, dtype=xp.float32)
+    pix_count = xp.zeros(upsampled_shape, dtype=xp.float32)
     upsampled_stack = xp.zeros(upsampled_shape, dtype=xp.float32)
-    upsampled_stack[..., ::upsampling_factor, ::upsampling_factor] = stack
-    pix_output = xp.zeros(upsampled_shape[-2:], dtype=xp.float32)
 
-    for BF_index in range(upsampled_stack.shape[0]):
+    for BF_index in range(stack.shape[0]):
         shift = upsampled_shifts_int[BF_index]
-        pix_output += xp.roll(upsampled_stack[BF_index], shift, axis=(0, 1))
 
-    upsampled_stack[..., ::upsampling_factor, ::upsampling_factor] = 1
-    pix_count = xp.zeros(upsampled_shape[-2:], dtype=xp.float32)
+        # values
+        upsampled_stack[::upsampling_factor, ::upsampling_factor] = stack[BF_index]
+        pix_output += xp.roll(upsampled_stack, shift, axis=(0, 1))
 
-    # sequential looping for memory reasons
-    for BF_index in range(upsampled_stack.shape[0]):
-        shift = upsampled_shifts_int[BF_index]
-        pix_count += xp.roll(upsampled_stack[BF_index], shift, axis=(0, 1))
+        # counts
+        upsampled_stack[::upsampling_factor, ::upsampling_factor] = 1
+        pix_count += xp.roll(upsampled_stack, shift, axis=(0, 1))
 
     # kernel density estimate
     pix_count = gaussian_filter(pix_count, kde_sigma)
