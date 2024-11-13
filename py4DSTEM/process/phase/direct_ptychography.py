@@ -1544,9 +1544,13 @@ class SSB(
 
                 gamma_abs = xp.abs(gamma)
                 gamma_ind = gamma_abs > threshold
-                normalization = gamma_abs[gamma_ind]
 
-                val = (G[gamma_ind] * gamma[gamma_ind].conj() / normalization).sum()
+                if gamma_ind.sum() > 0:
+                    normalization = gamma_abs[gamma_ind]
+                    val = (G[gamma_ind] * gamma[gamma_ind].conj() / normalization).sum()
+                else:
+                    val = 0j
+
                 output_array[ind_real] = val.real
                 output_array[ind_imag] = val.imag
 
@@ -1782,11 +1786,14 @@ class OBF(
             gamma_abs = xp.abs(gamma)
             gamma_ind = gamma_abs > threshold
 
-            normalization = gamma_abs[gamma_ind]
-            d = probe_normalization[gamma_ind]
-            normalization = d * xp.sqrt(xp.sum(normalization**2 / d))
+            if gamma_ind.sum() > 0:
+                normalization = gamma_abs[gamma_ind]
+                d = probe_normalization[gamma_ind]
+                normalization = d.mean() * xp.sqrt(xp.sum(normalization**2 / d))
+                val = (G[gamma_ind] * gamma[gamma_ind].conj() / normalization).sum()
+            else:
+                val = 0j
 
-            val = (G[gamma_ind] * gamma[gamma_ind].conj() / normalization).sum()
             output_array[ind_real] = val.real
             output_array[ind_imag] = val.imag
 
