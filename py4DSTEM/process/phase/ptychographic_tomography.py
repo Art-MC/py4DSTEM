@@ -226,7 +226,6 @@ class PtychographicTomography(
         list_of_probe_arrays,
         object_array,
         list_of_positions_px,
-        main_tilt_axis: str = "vertical",
         reciprocal_sampling=None,
         angular_sampling=None,
         store_initial_arrays=True,
@@ -271,15 +270,16 @@ class PtychographicTomography(
         num_probes_per_measurement = [0] + [amp.shape[0] for amp in list_of_amplitudes]
         num_probes_per_measurement = np.array(num_probes_per_measurement)
 
-        self._mean_diffraction_intensity = []
         self._probes_all = []
+        self._mean_diffraction_intensity = []
         self._num_diffraction_patterns = num_probes_per_measurement.sum()
+
         self._cum_probes_per_measurement = np.cumsum(num_probes_per_measurement)
         self._positions_px_all = np.empty((self._num_diffraction_patterns, 2))
 
         self._amplitudes_shape = np.array(list_of_amplitudes[0][0].shape)
         self._amplitudes = xp_storage.empty(
-            (self._num_diffraction_patterns,) + self._amplitudes_shape
+            (self._num_diffraction_patterns,) + tuple(self._amplitudes_shape)
         )
         self._object = xp.asarray(object_array, dtype=xp.float32)
 
@@ -303,10 +303,10 @@ class PtychographicTomography(
             self._positions_px_all[idx_start:idx_end] = pos
             self._mean_diffraction_intensity.append((amps**2).sum((-1, -2)).mean(0))
 
-            self._probes_all.append(probe)
+            self._probes_all.append(probe.copy())
             if store_initial_arrays:
-                self._probe_initial = probe.copy()
-                self._probe_initial_aperture = xp.abs(xp.fft.fft2(probe))
+                self._probes_all_initial.append(probe.copy())
+                self._probes_all_initial_aperture.append(xp.abs(xp.fft.fft2(probe)))
 
         # specify sampling
         if angular_sampling is None and reciprocal_sampling is None:
@@ -339,16 +339,7 @@ class PtychographicTomography(
         self._num_voxels = self._object.shape[0]
         self._object_fov_mask_inverse = np.full(self._object_shape, False)
 
-        # Precomputed propagator arrays
-        if main_tilt_axis == "vertical":
-            thickness = self._object_shape[1] * self.sampling[1]
-        elif main_tilt_axis == "horizontal":
-            thickness = self._object_shape[0] * self.sampling[0]
-        else:
-            thickness_h = self._object_shape[1] * self.sampling[1]
-            thickness_v = self._object_shape[0] * self.sampling[0]
-            thickness = max(thickness_h, thickness_v)
-
+        thickness = self._num_voxels * self.sampling[0]
         self._slice_thicknesses = np.tile(
             thickness / self._num_slices, self._num_slices - 1
         )
@@ -367,7 +358,7 @@ class PtychographicTomography(
         # necessary restarting attributes
         if store_initial_arrays:
             self._object_initial = self._object.copy()
-            self._object_initial_type = self._object_type
+            self._object_type_initial = self._object_type
 
             self._positions_px_initial_all = self._positions_px_all.copy()
             self._positions_initial_all = self._positions_px_initial_all.copy()

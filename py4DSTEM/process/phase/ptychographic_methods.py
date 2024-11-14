@@ -1609,7 +1609,7 @@ class ObjectNDProbeMethodsMixin:
             self._probe_initial_aperture = xp.abs(xp.fft.fft2(self._probe))
 
             self._object_initial = self._object.copy()
-            self._object_initial_type = self._object_type
+            self._object_type_initial = self._object_type
 
             self._positions_initial = self.positions
 
