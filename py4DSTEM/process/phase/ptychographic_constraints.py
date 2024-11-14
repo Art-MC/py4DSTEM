@@ -868,6 +868,7 @@ class Object3DConstraintsMixin:
         object_positivity,
         shrinkage_rad,
         object_mask,
+        object_real_space_support_mask,
         **kwargs,
     ):
         """Object3DConstraints wrapper function"""
@@ -898,6 +899,10 @@ class Object3DConstraintsMixin:
                 shrinkage_rad,
                 object_mask,
             )
+
+        # 3D support mask
+        if object_real_space_support_mask is not None:
+            current_object *= object_real_space_support_mask
 
         # Positivity
         if object_positivity:

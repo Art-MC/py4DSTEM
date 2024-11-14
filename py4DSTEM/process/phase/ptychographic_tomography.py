@@ -960,6 +960,7 @@ class PtychographicTomography(
         detector_fourier_mask: np.ndarray = None,
         virtual_detector_masks: Sequence[np.ndarray] = None,
         probe_real_space_support_mask: np.ndarray = None,
+        object_real_space_support_mask: np.ndarray = None,
         tv_denoise: bool = True,
         tv_denoise_weights: float = None,
         tv_denoise_inner_iter=40,
@@ -1159,6 +1160,11 @@ class PtychographicTomography(
         if virtual_detector_masks is not None:
             virtual_detector_masks = xp.asarray(virtual_detector_masks).astype(xp.bool_)
 
+        if object_real_space_support_mask is not None:
+            object_real_space_support_mask = xp.asarray(
+                object_real_space_support_mask, dtype=xp.float32
+            )
+
         # only return b/w iterations
         old_rot_matrix = np.eye(3)  # identity
 
@@ -1225,6 +1231,13 @@ class PtychographicTomography(
                     rot_matrix @ old_rot_matrix.T,
                     use_fourier_rotation,
                 )
+
+                if not collective_measurement_updates:
+                    object_real_space_support_mask = self._rotate_zxy_volume(
+                        object_real_space_support_mask,
+                        rot_matrix @ old_rot_matrix.T,
+                        use_fourier_rotation,
+                    )
 
                 object_sliced = self._project_sliced_object(
                     self._object, self._num_slices
@@ -1434,6 +1447,7 @@ class PtychographicTomography(
                             and self._object_fov_mask_inverse.sum() > 0
                             else None
                         ),
+                        object_real_space_support_mask=object_real_space_support_mask,
                         tv_denoise=tv_denoise and tv_denoise_weights is not None,
                         tv_denoise_weights=tv_denoise_weights,
                         tv_denoise_inner_iter=tv_denoise_inner_iter,
@@ -1445,6 +1459,12 @@ class PtychographicTomography(
             if collective_measurement_updates:
                 self._object += self._rotate_zxy_volume(
                     collective_object / len(indices),
+                    old_rot_matrix,
+                    use_fourier_rotation,
+                )
+
+                object_real_space_support_mask = self._rotate_zxy_volume(
+                    object_real_space_support_mask,
                     old_rot_matrix,
                     use_fourier_rotation,
                 )
@@ -1468,6 +1488,7 @@ class PtychographicTomography(
                         and self._object_fov_mask_inverse.sum() > 0
                         else None
                     ),
+                    object_real_space_support_mask=object_real_space_support_mask,
                     tv_denoise=tv_denoise and tv_denoise_weights is not None,
                     tv_denoise_weights=tv_denoise_weights,
                     tv_denoise_inner_iter=tv_denoise_inner_iter,
