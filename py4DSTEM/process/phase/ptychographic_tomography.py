@@ -355,20 +355,21 @@ class PtychographicTomography(
         self._rotation_best_rad = 0
         self._preprocessed = True
 
+        # necessary position attributes
+        self._positions_px_initial_all = self._positions_px_all.copy()
+        self._positions_initial_all = self._positions_px_initial_all.copy()
+        self._positions_initial_all[:, 0] *= self.sampling[0]
+        self._positions_initial_all[:, 1] *= self.sampling[1]
+
+        self._positions_initial = self._return_average_positions()
+        if self._positions_initial is not None:
+            self._positions_initial[:, 0] *= self.sampling[0]
+            self._positions_initial[:, 1] *= self.sampling[1]
+
         # necessary restarting attributes
         if store_initial_arrays:
             self._object_initial = self._object.copy()
             self._object_type_initial = self._object_type
-
-            self._positions_px_initial_all = self._positions_px_all.copy()
-            self._positions_initial_all = self._positions_px_initial_all.copy()
-            self._positions_initial_all[:, 0] *= self.sampling[0]
-            self._positions_initial_all[:, 1] *= self.sampling[1]
-
-            self._positions_initial = self._return_average_positions()
-            if self._positions_initial is not None:
-                self._positions_initial[:, 0] *= self.sampling[0]
-                self._positions_initial[:, 1] *= self.sampling[1]
 
         return self
 
