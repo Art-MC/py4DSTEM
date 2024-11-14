@@ -2860,7 +2860,7 @@ class Parallax(PhaseReconstruction):
 
         # if needed, add low pass filter output image
         if q_lowpass is not None:
-            im_fft_corr /= 1 + (xp.sqrt(qra) / q_lowpass) ** (2 * butterworth_order)
+            im_fft_corr /= 1 + (xp.sqrt(kra2) / q_lowpass) ** (2 * butterworth_order)
 
         # Output phase image
         self._recon_phase_corrected = xp.real(xp.fft.ifft2(im_fft_corr))
