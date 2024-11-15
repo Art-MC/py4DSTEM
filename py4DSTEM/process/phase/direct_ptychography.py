@@ -649,7 +649,7 @@ class DirectPtychography(
                 self._reciprocal_sampling[0] * alpha_probe / self.angular_sampling[0]
             )
 
-            bf_inds = f[self._trotter_inds[0], self._trotter_inds[1]] < q_probe
+            bf_inds = f[self._trotter_inds[0], self._trotter_inds[1]] < q_probe**2
             low_ind_x = self._trotter_inds[0][bf_inds][0]
             low_ind_y = self._trotter_inds[1][bf_inds][0]
             high_ind_x = self._trotter_inds[0][~bf_inds][0]
