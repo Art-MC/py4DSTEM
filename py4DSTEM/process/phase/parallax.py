@@ -1841,8 +1841,12 @@ class Parallax(PhaseReconstruction):
                     position_correction_butterworth_q_lowpass is not None
                     or position_correction_butterworth_q_highpass is not None
                 ):
-                    qx = xp.fft.fftfreq(BF_size[0], self._scan_sampling[0])
-                    qy = xp.fft.fftfreq(BF_size[1], self._scan_sampling[1])
+                    qx = xp.fft.fftfreq(BF_size[0], self._scan_sampling[0]).astype(
+                        xp.float32
+                    )
+                    qy = xp.fft.fftfreq(BF_size[1], self._scan_sampling[1]).astype(
+                        xp.float32
+                    )
 
                     qya, qxa = xp.meshgrid(qy, qx)
                     qra = xp.sqrt(qxa**2 + qya**2)
@@ -2042,8 +2046,8 @@ class Parallax(PhaseReconstruction):
                 ]
 
                 nx, ny = self._recon_BF_subpixel_aligned.shape
-                kx = xp.fft.fftfreq(nx, d=1)
-                ky = xp.fft.fftfreq(ny, d=1)
+                kx = xp.fft.fftfreq(nx, d=1).astype(xp.float32)
+                ky = xp.fft.fftfreq(ny, d=1).astype(xp.float32)
                 k = xp.fft.fftshift(xp.sqrt(kx[:, None] ** 2 + ky[None, :] ** 2))
 
                 recon_fft = xp.fft.fftshift(
@@ -2587,8 +2591,8 @@ class Parallax(PhaseReconstruction):
                     ]
 
                 # FFT coordinates
-                qx = xp.fft.fftfreq(im_FFT.shape[0], sx)
-                qy = xp.fft.fftfreq(im_FFT.shape[1], sy)
+                qx = xp.fft.fftfreq(im_FFT.shape[0], sx).astype(xp.float32)
+                qy = xp.fft.fftfreq(im_FFT.shape[1], sy).astype(xp.float32)
                 qr2 = qx[:, None] ** 2 + qy[None, :] ** 2
 
                 alpha_FFT = xp.sqrt(qr2) * self._wavelength
@@ -2824,8 +2828,8 @@ class Parallax(PhaseReconstruction):
             sy = self._scan_sampling[1]
 
         # Fourier coordinates
-        kx = xp.fft.fftfreq(im.shape[0], sx)
-        ky = xp.fft.fftfreq(im.shape[1], sy)
+        kx = xp.fft.fftfreq(im.shape[0], sx).astype(xp.float32)
+        ky = xp.fft.fftfreq(im.shape[1], sy).astype(xp.float32)
         kra2 = (kx[:, None]) ** 2 + (ky[None, :]) ** 2
 
         if use_CTF_fit is None:
@@ -2946,8 +2950,8 @@ class Parallax(PhaseReconstruction):
         # Fourier coordinates
         sx, sy = self._scan_sampling
         nx, ny = self._recon_BF.shape
-        kx = xp.fft.fftfreq(nx, sx)
-        ky = xp.fft.fftfreq(ny, sy)
+        kx = xp.fft.fftfreq(nx, sx).astype(xp.float32)
+        ky = xp.fft.fftfreq(ny, sy).astype(xp.float32)
         kra2 = (kx[:, None]) ** 2 + (ky[None, :]) ** 2
 
         if use_CTF_fit:

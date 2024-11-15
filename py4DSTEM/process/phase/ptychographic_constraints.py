@@ -184,8 +184,12 @@ class ObjectNDConstraintsMixin:
             Constrained object estimate
         """
         xp = self._xp
-        qx = xp.fft.fftfreq(current_object.shape[-2], self.sampling[0])
-        qy = xp.fft.fftfreq(current_object.shape[-1], self.sampling[1])
+        qx = xp.fft.fftfreq(current_object.shape[-2], self.sampling[0]).astype(
+            xp.float32
+        )
+        qy = xp.fft.fftfreq(current_object.shape[-1], self.sampling[1]).astype(
+            xp.float32
+        )
 
         qya, qxa = xp.meshgrid(qy, qx)
         qra = xp.sqrt(qxa**2 + qya**2)
@@ -620,9 +624,15 @@ class Object2p5DConstraintsMixin:
         pad_width = ((z_padding, z_padding), (0, 0), (0, 0))
         current_object = xp.pad(current_object, pad_width=pad_width, mode="constant")
 
-        qz = xp.fft.fftfreq(current_object.shape[0], self._slice_thicknesses[0])
-        qx = xp.fft.fftfreq(current_object.shape[1], self.sampling[0])
-        qy = xp.fft.fftfreq(current_object.shape[2], self.sampling[1])
+        qz = xp.fft.fftfreq(current_object.shape[0], self._slice_thicknesses[0]).astype(
+            xp.float32
+        )
+        qx = xp.fft.fftfreq(current_object.shape[1], self.sampling[0]).astype(
+            xp.float32
+        )
+        qy = xp.fft.fftfreq(current_object.shape[2], self.sampling[1]).astype(
+            xp.float32
+        )
 
         kz_regularization_gamma *= self._slice_thicknesses[0] / self.sampling[0]
 
@@ -831,9 +841,15 @@ class Object3DConstraintsMixin:
             Constrained object estimate
         """
         xp = self._xp
-        qz = xp.fft.fftfreq(current_object.shape[0], self.sampling[1])
-        qx = xp.fft.fftfreq(current_object.shape[1], self.sampling[0])
-        qy = xp.fft.fftfreq(current_object.shape[2], self.sampling[1])
+        qz = xp.fft.fftfreq(current_object.shape[0], self.sampling[1]).astype(
+            xp.float32
+        )
+        qx = xp.fft.fftfreq(current_object.shape[1], self.sampling[0]).astype(
+            xp.float32
+        )
+        qy = xp.fft.fftfreq(current_object.shape[2], self.sampling[1]).astype(
+            xp.float32
+        )
         qza, qxa, qya = xp.meshgrid(qz, qx, qy, indexing="ij")
         qra = xp.sqrt(qza**2 + qxa**2 + qya**2)
 
@@ -975,8 +991,8 @@ class ProbeConstraintsMixin:
         probe_intensity = xp.abs(current_probe) ** 2
         current_probe_sum = xp.sum(probe_intensity)
 
-        X = xp.fft.fftfreq(current_probe.shape[0])[:, None]
-        Y = xp.fft.fftfreq(current_probe.shape[1])[None]
+        X = xp.fft.fftfreq(current_probe.shape[0]).astype(xp.float32)[:, None]
+        Y = xp.fft.fftfreq(current_probe.shape[1]).astype(xp.float32)[None]
         r = xp.hypot(X, Y) - relative_radius
 
         sigma = np.sqrt(np.pi) / relative_width

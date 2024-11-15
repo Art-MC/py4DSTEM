@@ -1014,8 +1014,8 @@ def return_1D_profile(
     if pixel_size is None:
         pixel_size = (1, 1)
 
-    x = xp.fft.fftfreq(intensity.shape[0], pixel_size[0])
-    y = xp.fft.fftfreq(intensity.shape[1], pixel_size[1])
+    x = xp.fft.fftfreq(intensity.shape[0], pixel_size[0]).astype(xp.float32)
+    y = xp.fft.fftfreq(intensity.shape[1], pixel_size[1]).astype(xp.float32)
     q = xp.sqrt(x[:, None] ** 2 + y[None, :] ** 2)
     q = q.ravel()
 
@@ -1094,8 +1094,8 @@ def fourier_rotate_real_volume(array, angle, axes=(0, 1), xp=np):
     rotation_ax = np.setdiff1d([0, 1, 2], axes)[0]
     plane_dims = array_shape[axes]
 
-    qx = xp.fft.fftfreq(plane_dims[0], 1)
-    qy = xp.fft.fftfreq(plane_dims[1], 1)
+    qx = xp.fft.fftfreq(plane_dims[0], 1).astype(xp.float32)
+    qy = xp.fft.fftfreq(plane_dims[1], 1).astype(xp.float32)
     qxa, qya = xp.meshgrid(qx, qy, indexing="ij")
 
     x = xp.arange(plane_dims[0]) - plane_dims[0] / 2
@@ -1374,11 +1374,11 @@ def polar_to_cartesian_transform_2Ddata(
     cx, cy = xy_center
 
     if corner_centered:
-        x = xp.fft.fftfreq(sx, d=1 / sx)
-        y = xp.fft.fftfreq(sy, d=1 / sy)
+        x = xp.fft.fftfreq(sx, d=1 / sx).astype(xp.float32)
+        y = xp.fft.fftfreq(sy, d=1 / sy).astype(xp.float32)
     else:
-        x = xp.arange(sx)
-        y = xp.arange(sy)
+        x = xp.arange(sx, dtype=xp.float32)
+        y = xp.arange(sy, dtype=xp.float32)
 
     xa, ya = xp.meshgrid(x, y, indexing="ij")
     ra = xp.hypot(xa - cx, ya - cy)
@@ -1548,8 +1548,8 @@ def calculate_aberration_gradient_basis(
     """ """
     sx, sy = sampling
     nx, ny = gpts
-    qx = xp.fft.fftfreq(nx, sx)
-    qy = xp.fft.fftfreq(ny, sy)
+    qx = xp.fft.fftfreq(nx, sx).astype(xp.float32)
+    qy = xp.fft.fftfreq(ny, sy).astype(xp.float32)
     qx, qy = xp.meshgrid(qx, qy, indexing="ij")
 
     # passive rotation
@@ -1653,8 +1653,8 @@ def aberrations_basis_function(
     dx, dy = probe_sampling
     wavelength = electron_wavelength_angstrom(energy)
 
-    qx = xp.fft.fftfreq(sx, dx)
-    qy = xp.fft.fftfreq(sy, dy)
+    qx = xp.fft.fftfreq(sx, dx).astype(xp.float32)
+    qy = xp.fft.fftfreq(sy, dy).astype(xp.float32)
     qr2 = qx[:, None] ** 2 + qy[None, :] ** 2
     alpha = xp.sqrt(qr2) * wavelength
     theta = xp.arctan2(qy[None, :], qx[:, None])
@@ -2155,8 +2155,12 @@ def pixel_rolling_kernel_density_estimate(
 
     if lowpass_filter:
         pix_fft = xp.fft.fft2(pix_output)
-        pix_fft /= xp.sinc(xp.fft.fftfreq(pix_output.shape[0], d=1.0))[:, None]
-        pix_fft /= xp.sinc(xp.fft.fftfreq(pix_output.shape[1], d=1.0))[None]
+        pix_fft /= xp.sinc(
+            xp.fft.fftfreq(pix_output.shape[0], d=1.0).astype(xp.float32)
+        )[:, None]
+        pix_fft /= xp.sinc(
+            xp.fft.fftfreq(pix_output.shape[1], d=1.0).astype(xp.float32)
+        )[None]
         pix_output = xp.real(xp.fft.ifft2(pix_fft))
 
     return pix_output
@@ -2262,8 +2266,12 @@ def bilinear_kernel_density_estimate(
 
     if lowpass_filter:
         pix_fft = xp.fft.fft2(pix_output)
-        pix_fft /= xp.sinc(xp.fft.fftfreq(pix_output.shape[0], d=1.0))[:, None]
-        pix_fft /= xp.sinc(xp.fft.fftfreq(pix_output.shape[1], d=1.0))[None]
+        pix_fft /= xp.sinc(
+            xp.fft.fftfreq(pix_output.shape[0], d=1.0).astype(xp.float32)
+        )[:, None]
+        pix_fft /= xp.sinc(
+            xp.fft.fftfreq(pix_output.shape[1], d=1.0).astype(xp.float32)
+        )[None]
         pix_output = xp.real(xp.fft.ifft2(pix_fft))
 
     return pix_output
@@ -2364,8 +2372,12 @@ def lanczos_kernel_density_estimate(
 
     if lowpass_filter:
         pix_fft = xp.fft.fft2(pix_output)
-        pix_fft /= xp.sinc(xp.fft.fftfreq(pix_output.shape[0], d=1.0))[:, None]
-        pix_fft /= xp.sinc(xp.fft.fftfreq(pix_output.shape[1], d=1.0))[None]
+        pix_fft /= xp.sinc(
+            xp.fft.fftfreq(pix_output.shape[0], d=1.0).astype(xp.float32)
+        )[:, None]
+        pix_fft /= xp.sinc(
+            xp.fft.fftfreq(pix_output.shape[1], d=1.0).astype(xp.float32)
+        )[None]
         pix_output = xp.real(xp.fft.ifft2(pix_fft))
 
     return pix_output
@@ -2898,8 +2910,8 @@ def fourier_rotation_best_shears_combination(tf):
 def fourier_shear_Sx(array, a, b, xp=np):
     """ """
     Nx, Ny, Nz = array.shape
-    nx = xp.arange(Nx) - (Nx - 1) / 2
-    ny, nz = tuple(xp.fft.fftfreq(N, 1 / N) for N in [Ny, Nz])
+    nx = xp.arange(Nx, dtype=xp.float32) - (Nx - 1) / 2
+    ny, nz = tuple(xp.fft.fftfreq(N, 1 / N).astype(xp.float32) for N in [Ny, Nz])
     nxa, nya, nza = xp.meshgrid(nx, ny, nz, indexing="ij")
     phase_shift = xp.exp(-2j * np.pi * (a * nya + b * nza) * nxa / Nx)
 
@@ -2910,8 +2922,8 @@ def fourier_shear_Sx(array, a, b, xp=np):
 def fourier_shear_Sy(array, a, b, xp=np):
     """ """
     Nx, Ny, Nz = array.shape
-    ny = xp.arange(Ny) - (Ny - 1) / 2
-    nx, nz = tuple(xp.fft.fftfreq(N, 1 / N) for N in [Nx, Nz])
+    ny = xp.arange(Ny, dtype=xp.float32) - (Ny - 1) / 2
+    nx, nz = tuple(xp.fft.fftfreq(N, 1 / N).astype(xp.float32) for N in [Nx, Nz])
     nxa, nya, nza = xp.meshgrid(nx, ny, nz, indexing="ij")
     phase_shift = xp.exp(-2j * np.pi * (a * nza + b * nxa) * nya / Ny)
 
@@ -2922,8 +2934,8 @@ def fourier_shear_Sy(array, a, b, xp=np):
 def fourier_shear_Sz(array, a, b, xp=np):
     """ """
     Nx, Ny, Nz = array.shape
-    nz = xp.arange(Nz) - (Nz - 1) / 2
-    nx, ny = tuple(xp.fft.fftfreq(N, 1 / N) for N in [Nx, Ny])
+    nz = xp.arange(Nz, dtype=xp.float32) - (Nz - 1) / 2
+    nx, ny = tuple(xp.fft.fftfreq(N, 1 / N).astype(xp.float32) for N in [Nx, Ny])
     nxa, nya, nza = xp.meshgrid(nx, ny, nz, indexing="ij")
     phase_shift = xp.exp(-2j * np.pi * (a * nxa + b * nya) * nza / Nz)
 
