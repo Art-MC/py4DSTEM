@@ -1233,7 +1233,10 @@ class PtychographicTomography(
                     use_fourier_rotation,
                 )
 
-                if not collective_measurement_updates:
+                if (
+                    not collective_measurement_updates
+                    and object_real_space_support_mask is not None
+                ):
                     object_real_space_support_mask = self._rotate_zxy_volume(
                         object_real_space_support_mask,
                         rot_matrix @ old_rot_matrix.T,
@@ -1464,11 +1467,12 @@ class PtychographicTomography(
                     use_fourier_rotation,
                 )
 
-                object_real_space_support_mask = self._rotate_zxy_volume(
-                    object_real_space_support_mask,
-                    old_rot_matrix,
-                    use_fourier_rotation,
-                )
+                if object_real_space_support_mask is not None:
+                    object_real_space_support_mask = self._rotate_zxy_volume(
+                        object_real_space_support_mask,
+                        old_rot_matrix,
+                        use_fourier_rotation,
+                    )
 
                 # object only
                 self._object = self._object_constraints(
