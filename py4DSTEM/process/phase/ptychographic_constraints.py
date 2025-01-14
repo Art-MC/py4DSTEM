@@ -114,7 +114,9 @@ class ObjectNDConstraintsMixin:
         if self._object_type == "complex":
             return current_object
         else:
-            return current_object.clip(0.0)
+            # print("current object in positivity: ", current_object)
+            return cp.clip(current_object, 0.0, current_object.max())
+            # return current_object.clip(0.0)
 
     def _object_gaussian_constraint(
         self, current_object, gaussian_filter_sigma, pure_phase_object

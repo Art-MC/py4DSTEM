@@ -643,6 +643,7 @@ class SingleslicePtychography(
         training_mode = False,
         model_start = 1,
         model_iters=1,
+        device_cuda=0,
     ):
         """
         Ptychographic reconstruction main method.
@@ -767,7 +768,7 @@ class SingleslicePtychography(
         # handle device/storage
         self.set_device(device, clear_fft_cache)
         if self._device == "gpu":
-            self._device_cuda = "cuda:0"
+            self._device_cuda = f"cuda:{device_cuda}"
         self._add_to_delta=add_to_delta
 
         if device is not None:
@@ -867,7 +868,8 @@ class SingleslicePtychography(
                 weights[model_start:] = 1
             else:
                 weights[model_start+model_iters:] = 0
-                # weights = weights / 4 # 1.25 # step size
+                weights = weights * 1# step size
+                # weights = weights / 1.3 # step size
 
             self._ML_weights = weights
             if self._verbose:
@@ -1046,8 +1048,8 @@ class SingleslicePtychography(
                     if a0 in store_training_iterations:
                         self.object_delta_iterations.append(asnumpy(self._object_delta).copy())
                 else:
-                    self.object_iterations.append(asnumpy(self._object).copy())
                     self.probe_iterations.append(self.probe_centered)
+                self.object_iterations.append(asnumpy(self._object).copy())
 
         # store result
         self.object = asnumpy(self._object)

@@ -1866,17 +1866,26 @@ class ObjectNDProbeMethodsMixin:
 
             # orig_obj_shape = self._object.shape
             # sm_obj_shape = (154, 154)
+            # from PyLorentz.visualize import show_im
 
             if self._FT_mask is None:
-                FT_mask = make_truth_mask(-1*np.rad2deg(self._rotation_best_rad), self._object.shape, self.object_cropped.shape, self._object_padding_px[0])
+                mask_rot = np.rad2deg(self._rotation_best_rad)
+                if not self._rotation_best_transpose:
+                    mask_rot *= -1
+                FT_mask = make_truth_mask(mask_rot, self._object.shape, self.object_cropped.shape, self._object_padding_px[0])
+                # FT_mask = make_truth_mask(np.rad2deg(self._rotation_best_rad), self._object.shape, self.object_cropped.shape, self._object_padding_px[0])
+                # FT_mask = make_truth_mask(-1*np.rad2deg(self._rotation_best_rad), self._object.shape, self.object_cropped.shape, self._object_padding_px[0])
                 FT_mask = ndi.gaussian_filter(FT_mask, 8)
-                # show_im(FT_mask, "FT mask")
                 self._FT_mask = cp.array(FT_mask)
+
+            # show_im(np.angle(self._object.get()), "starting phase")
 
             obj_FT = xp.fft.fftshift(xp.fft.fft2(self._object))
             delta_FT = xp.fft.fftshift(xp.fft.fft2(object_delta))
             obj_FT_win = xp.fft.fftshift(xp.fft.fft2(xp.abs(self._object) * self._FT_mask * xp.exp(1.0j * xp.angle(self._object) * self._FT_mask)))
             delta_FT_win = xp.fft.fftshift(xp.fft.fft2(xp.abs(object_delta) * self._FT_mask * xp.exp(1.0j * xp.angle(object_delta) * self._FT_mask)))
+            # obj_FT_win = xp.fft.fftshift(xp.fft.fft2(xp.abs(self._object)  * xp.exp(1.0j * xp.angle(self._object) )))
+            # delta_FT_win = xp.fft.fftshift(xp.fft.fft2(xp.abs(object_delta)  * xp.exp(1.0j * xp.angle(object_delta) )))
 
             # obj_FT = xp.array(bilinear_resample(obj_FT.get(), output_size=sm_obj_shape))
             # delta_FT = xp.array(bilinear_resample(delta_FT.get(), output_size=sm_obj_shape))
@@ -1889,6 +1898,7 @@ class ObjectNDProbeMethodsMixin:
             nn_input = torch.stack([obj_crop, delta_crop])[None,...]
             pred_delta = model.forward(nn_input).squeeze() * step_size * ML_weight
             pred_delta = cp.array(pred_delta.detach())
+            # self.pred_delta = pred_delta
 
             if self._add_to_delta:
                 new_obj_FT = add_center(obj_FT + delta_FT, pred_delta, return_copy=False)
@@ -1896,8 +1906,17 @@ class ObjectNDProbeMethodsMixin:
             else:
                 new_obj_FT = add_center(obj_FT, pred_delta, return_copy=False)
 
+
+            recon = np.zeros(self._object.shape, dtype=np.complex128)
+            recon = add_center(recon, add_center(nn_input.squeeze().sum(axis=0).cpu().detach().numpy(), pred_delta.get()))
+            recon = np.fft.ifft2(np.fft.ifftshift(recon))
+            # show_im(np.angle(recon) * self._FT_mask.get(), "recon part")
+
             # new_obj_FT = xp.array(bilinear_resample(new_obj_FT.get(), output_size=orig_obj_shape))
             current_object = xp.fft.ifft2(xp.fft.ifftshift(new_obj_FT)).squeeze()
+            if self._object_type == "potential":
+                current_object = xp.abs(current_object)# + xp.angle(current_object)
+            # show_im(np.angle(current_object.get()), "updated phase")
             # current_object = xp.array(bilinear_resample(current_object.get(), output_size=orig_obj_shape))
         else:
             current_object += object_delta
