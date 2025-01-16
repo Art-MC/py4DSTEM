@@ -1689,7 +1689,9 @@ class SSB(
                     xp=xp,
                 )
 
-            with WorkerPool(n_jobs=num_jobs, shared_objects=shared_objects) as pool:
+            with WorkerPool(
+                n_jobs=num_jobs, shared_objects=shared_objects, use_dill=True
+            ) as pool:
                 pool.map(
                     wrapper_function,
                     itertools.product(range(sx), range(sy)),
@@ -1920,7 +1922,9 @@ class OBF(
                     xp=xp,
                 )
 
-            with WorkerPool(n_jobs=num_jobs, shared_objects=shared_objects) as pool:
+            with WorkerPool(
+                n_jobs=num_jobs, shared_objects=shared_objects, use_dill=True
+            ) as pool:
                 pool.map(
                     wrapper_function,
                     itertools.product(range(sx), range(sy)),
@@ -2109,7 +2113,9 @@ class WDD(
                     xp=xp,
                 )
 
-            with WorkerPool(n_jobs=num_jobs, shared_objects=shared_objects) as pool:
+            with WorkerPool(
+                n_jobs=num_jobs, shared_objects=shared_objects, use_dill=True
+            ) as pool:
                 pool.map(
                     wrapper_function,
                     itertools.product(range(sx), range(sy)),
