@@ -759,15 +759,15 @@ class DirectPtychography(
 
         Parameters
         ----------
-        fit_aberrations_max_radial_order: int
+        max_radial_order: int
             Max radial order for fitting of aberrations.
-        fit_aberrations_max_angular_order: int
+        max_angular_order: int
             Max angular order for fitting of aberrations.
-        fit_aberrations_min_radial_order: int
+        min_radial_order: int
             Min radial order for fitting of aberrations.
-        fit_aberrations_min_angular_order: int
+        min_angular_order: int
             Min angular order for fitting of aberrations.
-        fit_aberrations_mn: list
+        aberrations_mn: list
             If not None, sets aberrations mn explicitly.
         num_trotters : int
             Number of trotters to use for aberration fitting. If None, trotters with
@@ -784,6 +784,8 @@ class DirectPtychography(
               I.e. [[C1,C12a,C12b],[C1,C12a,C12b,C21a, C21b, C23a, C23b], ...]
             'recursive-exclusive': same as 'recursive' but previous orders are not refined further.
               I.e. [[C1,C12a,C12b],[C21a, C21b, C23a, C23b], ...]
+        plot_fitted_fourier_probe: bool
+            If True (default), the fitted aberration function is plotted.
         """
         asnumpy = self._asnumpy
         storage = self._storage
@@ -1583,7 +1585,7 @@ class SSB(
         Parameters
         --------
         phase_compensation: bool, optional
-            If True, the measured phase is compensated using a complex virtual detector. Recommnended.
+            If True, the measured phase is compensated using a complex virtual detector. Recommended.
         num_jobs: int, optional
             Number of processes to use. Default is None, which spawns as many processes as CPUs on
             the system.
