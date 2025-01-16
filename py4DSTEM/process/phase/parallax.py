@@ -437,7 +437,7 @@ class Parallax(PhaseReconstruction):
                         intensities_np[rx, ry],
                         -com_fitted_x[rx, ry] + center_x,
                         -com_fitted_y[rx, ry] + center_y,
-                        bilinear=True,
+                        bilinear=False,
                         device="cpu",
                     )
 

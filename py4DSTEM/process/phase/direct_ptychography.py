@@ -583,7 +583,7 @@ class DirectPtychography(
                 self._vacuum_probe_intensity,
                 -probe_x0,
                 -probe_y0,
-                bilinear=True,
+                bilinear=False,
                 device=device,
             )
 

@@ -1438,7 +1438,7 @@ class PhaseReconstruction(Custom):
                 diff_intensities[rx, ry],
                 -com_fitted_x[rx, ry],
                 -com_fitted_y[rx, ry],
-                bilinear=True,
+                bilinear=False,
                 device="cpu",
             )
 
