@@ -979,15 +979,17 @@ class Parallax(PhaseReconstruction):
         sampling = 1 / (
             np.array(self._reciprocal_sampling) * self._region_of_interest_shape
         )
-        aberrations_basis, aberrations_basis_du, aberrations_basis_dv = (
-            calculate_aberration_gradient_basis(
-                aberrations_mn,
-                sampling,
-                self._region_of_interest_shape,
-                self._wavelength,
-                rotation_angle=np.deg2rad(rotation_angle_deg),
-                xp=xp,
-            )
+        (
+            aberrations_basis,
+            aberrations_basis_du,
+            aberrations_basis_dv,
+        ) = calculate_aberration_gradient_basis(
+            aberrations_mn,
+            sampling,
+            self._region_of_interest_shape,
+            self._wavelength,
+            rotation_angle=np.deg2rad(rotation_angle_deg),
+            xp=xp,
         )
 
         # shifts
@@ -3198,7 +3200,6 @@ class Parallax(PhaseReconstruction):
         shifts = shifts_px * scale_arrows * xp.array(self._reciprocal_sampling)
 
         if plot_rotated_shifts and hasattr(self, "rotation_Q_to_R_rads"):
-
             if figax is None:
                 figsize = kwargs.pop("figsize", (8, 4))
                 fig, ax = plt.subplots(1, 2, figsize=figsize)

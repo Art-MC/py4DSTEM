@@ -163,7 +163,6 @@ def scan_size(path, scan):
     header_path = path[:-3] + "hdr"
     result = {}
     if os.path.exists(header_path):
-
         with open(header_path, encoding="UTF-8") as f:
             for line in f:
                 k, v = line.split("\t", 1)
