@@ -341,7 +341,7 @@ class PtychographicTomography(
 
         thickness = self._num_voxels * self.sampling[0]
         self._slice_thicknesses = np.tile(
-            thickness / self._num_slices, self._num_slices - 1
+            thickness / (self._num_slices - 1), self._num_slices - 1
         )
         self._propagator_arrays = self._precompute_propagator_arrays(
             self._region_of_interest_shape,
@@ -782,7 +782,7 @@ class PtychographicTomography(
             thickness = max(thickness_h, thickness_v)
 
         self._slice_thicknesses = np.tile(
-            thickness / self._num_slices, self._num_slices - 1
+            thickness / (self._num_slices - 1), self._num_slices - 1
         )
         self._propagator_arrays = self._precompute_propagator_arrays(
             self._region_of_interest_shape,
@@ -961,7 +961,8 @@ class PtychographicTomography(
         detector_fourier_mask: np.ndarray = None,
         virtual_detector_masks: Sequence[np.ndarray] = None,
         probe_real_space_support_mask: np.ndarray = None,
-        object_real_space_support_mask: np.ndarray = None,
+        symmetric_object_real_space_support_mask: np.ndarray = None,
+        asymmetric_object_real_space_support_mask: np.ndarray = None,
         tv_denoise: bool = True,
         tv_denoise_weights: float = None,
         tv_denoise_inner_iter=40,
@@ -1161,13 +1162,24 @@ class PtychographicTomography(
         if virtual_detector_masks is not None:
             virtual_detector_masks = xp.asarray(virtual_detector_masks).astype(xp.bool_)
 
-        if object_real_space_support_mask is not None:
+        if asymmetric_object_real_space_support_mask is None:
+            asymmetric_mask = False
+            if symmetric_object_real_space_support_mask is None:
+                nz, nx, ny = self._object.shape
+                z, x, y = xp.ogrid[-1 : 1 : nz * 1j, -1 : 1 : nx * 1j, -1 : 1 : ny * 1j]
+                r = xp.sqrt(z**2 + x**2 + y**2).astype(xp.float32)
+                object_real_space_support_mask = xp.sqrt(
+                    xp.clip((1 - r) / 0.05 + 0.5, 0, 1)
+                )
+            else:
+                object_real_space_support_mask = xp.asarray(
+                    symmetric_object_real_space_support_mask, dtype=xp.float32
+                ).clip(0, 1)
+        else:
+            asymmetric_mask = True
             object_real_space_support_mask = xp.asarray(
-                object_real_space_support_mask, dtype=xp.float32
-            )
-
-        # only return b/w iterations
-        old_rot_matrix = np.eye(3)  # identity
+                asymmetric_object_real_space_support_mask, dtype=xp.float32
+            ).clip(0, 1)
 
         # compute orientation matrices ordering
         if orientation_matrices_ordering == "shuffled":
@@ -1204,6 +1216,9 @@ class PtychographicTomography(
 
                     all_indices = orientation_matrices_ordering
 
+        # only return b/w iterations
+        old_rot_matrix = np.eye(3)  # identity
+
         # main loop
         for a0 in tqdmnd(
             num_iter,
@@ -1233,15 +1248,12 @@ class PtychographicTomography(
                     use_fourier_rotation,
                 )
 
-                if (
-                    not collective_measurement_updates
-                    and object_real_space_support_mask is not None
-                ):
+                if not collective_measurement_updates and asymmetric_mask:
                     object_real_space_support_mask = self._rotate_zxy_volume(
                         object_real_space_support_mask,
                         rot_matrix @ old_rot_matrix.T,
                         use_fourier_rotation,
-                    )
+                    ).clip(0, 1)
 
                 object_sliced = self._project_sliced_object(
                     self._object, self._num_slices
@@ -1467,12 +1479,12 @@ class PtychographicTomography(
                     use_fourier_rotation,
                 )
 
-                if object_real_space_support_mask is not None:
+                if asymmetric_mask:
                     object_real_space_support_mask = self._rotate_zxy_volume(
                         object_real_space_support_mask,
                         old_rot_matrix,
                         use_fourier_rotation,
-                    )
+                    ).clip(0, 1)
 
                 # object only
                 self._object = self._object_constraints(
@@ -1505,12 +1517,29 @@ class PtychographicTomography(
                 rotated_object = self._rotate_zxy_volume(
                     self._object, old_rot_matrix.T, use_fourier_rotation
                 )
+                if asymmetric_mask:
+                    rotated_mask = self._rotate_zxy_volume(
+                        object_real_space_support_mask,
+                        old_rot_matrix.T,
+                        use_fourier_rotation,
+                    ).clip(0, 1)
+                    rotated_object *= rotated_mask
+                else:
+                    rotated_object *= object_real_space_support_mask
+
                 self.object_iterations.append(asnumpy(rotated_object))
                 self.probe_iterations.append(self.probe_centered)
 
         self._object = self._rotate_zxy_volume(
             self._object, old_rot_matrix.T, use_fourier_rotation
         )
+        if asymmetric_mask:
+            object_real_space_support_mask = self._rotate_zxy_volume(
+                object_real_space_support_mask,
+                old_rot_matrix.T,
+                use_fourier_rotation,
+            ).clip(0, 1)
+        self._object *= object_real_space_support_mask
 
         # store result
         self.object = asnumpy(self._object)

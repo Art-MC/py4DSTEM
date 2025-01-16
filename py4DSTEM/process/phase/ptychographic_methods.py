@@ -865,7 +865,10 @@ class Object3DMethodsMixin:
         offset = in_center - out_center
 
         volume = affine_transform(
-            volume, tf, offset=offset, order=order, mode="grid-constant"
+            volume,
+            tf,
+            offset=offset,
+            order=order,
         )
 
         return volume
