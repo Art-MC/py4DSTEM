@@ -2959,7 +2959,7 @@ def fourier_rotate_volume_base(array, tf, xp=np):
     return out_array
 
 
-def fourier_rotate_volume(array, tf, angle_threshold=np.pi / 6, xp=np):
+def fourier_rotate_volume(array, tf, angle_threshold=np.pi / 9, xp=np):
     """ """
 
     cmplx_obj = xp.iscomplexobj(array)
@@ -3011,7 +3011,7 @@ def return_tsp_and_edge_weighted_graph(old_graph):
 
 
 def calculate_orientation_matrices_tsp_ordering(
-    orientation_matrices, num_iter, angle_threshold=np.pi / 6
+    orientation_matrices, num_iter, angle_threshold=np.pi / 9
 ):
     """ """
     try:
