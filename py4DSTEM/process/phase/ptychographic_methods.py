@@ -1869,11 +1869,15 @@ class ObjectNDProbeMethodsMixin:
             # from PyLorentz.visualize import show_im
 
             if self._FT_mask is None:
+<<<<<<< HEAD
                 mask_rot = np.rad2deg(self._rotation_best_rad)
                 if not self._rotation_best_transpose:
                     mask_rot *= -1
                 FT_mask = make_truth_mask(mask_rot, self._object.shape, self.object_cropped.shape, self._object_padding_px[0])
                 # FT_mask = make_truth_mask(np.rad2deg(self._rotation_best_rad), self._object.shape, self.object_cropped.shape, self._object_padding_px[0])
+=======
+                FT_mask = make_truth_mask(np.rad2deg(self._rotation_best_rad), self._object.shape, self.object_cropped.shape, self._object_padding_px[0])
+>>>>>>> 3700bf3d (last changes to phaseML)
                 # FT_mask = make_truth_mask(-1*np.rad2deg(self._rotation_best_rad), self._object.shape, self.object_cropped.shape, self._object_padding_px[0])
                 FT_mask = ndi.gaussian_filter(FT_mask, 8)
                 self._FT_mask = cp.array(FT_mask)

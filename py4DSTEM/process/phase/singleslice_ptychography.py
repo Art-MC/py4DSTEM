@@ -631,6 +631,7 @@ class SingleslicePtychography(
         fix_potential_baseline: bool = True,
         detector_fourier_mask: np.ndarray = None,
         store_iterations: bool = False,
+        store_all_iterations: bool = False,
         progress_bar: bool = True,
         reset: bool = None,
         device: str = None,
@@ -1047,6 +1048,9 @@ class SingleslicePtychography(
                 if store_training:
                     if a0 in store_training_iterations:
                         self.object_delta_iterations.append(asnumpy(self._object_delta).copy())
+                    if store_all_iterations:
+                        self.object_iterations.append(asnumpy(self._object).copy())
+                        self.probe_iterations.append(self.probe_centered)
                 else:
                     self.probe_iterations.append(self.probe_centered)
                 self.object_iterations.append(asnumpy(self._object).copy())
